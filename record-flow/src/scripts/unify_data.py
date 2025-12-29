@@ -1,0 +1,298 @@
+import json
+import base64
+import requests
+import datetime
+import argparse
+from typing import Dict, Any, List, Optional
+
+# Configuration
+OLLAMA_URL = "http://localhost:11434/api/generate"
+OLLAMA_MODEL = "llama3.1"
+
+class OllamaSummarizer:
+    def __init__(self, model: str = OLLAMA_MODEL, url: str = OLLAMA_URL):
+        self.model = model
+        self.url = url
+
+    def summarize(self, record: Dict[str, Any]) -> str:
+        """
+        Generates a quality and operations summary using a local Ollama instance.
+        """
+        # Create a simplified version of the record for the prompt to save context/time
+        # We redact ID and Name to focus the LLM on operations as requested
+        context_record = {k: v for k, v in record.items() if 'id' not in k.lower() and 'name' not in k.lower()}
+        
+        prompt = (
+            f"You are a childcare data analyst helping parents evaluating this provider. "
+            f"Write a concise, factual 2-3 sentence summary of their operational quality and history based ONLY on the provided record. "
+            f"Highlight key strengths or risks such as: years in operation (derived from license date), specific deficiency counts (if any), and scale of care. "
+            f"Avoid generic phrases like 'appears to be' or 'good standing'. Use direct, helpful language. "
+            f"IMPORTANT: Start your response directly with the summary. Do NOT say 'Here is a summary' or similar. "
+            f"Do not mention the ID or Name. Record: {json.dumps(context_record)}"
+        )
+        
+        payload = {
+            "model": self.model,
+            "prompt": prompt,
+            "stream": False
+        }
+        
+        try:
+            response = requests.post(self.url, json=payload, timeout=30)
+            response.raise_for_status()
+            raw_summary = response.json().get("response", "").strip()
+            return self._clean_summary(raw_summary)
+        except requests.RequestException as e:
+            print(f"Warning: Ollama summary failed: {e}")
+            return "Summary unavailable."
+
+    def _clean_summary(self, text: str) -> str:
+        """
+        Removes conversational preambles often added by LLMs.
+        """
+        # Common preambles to strip
+        preambles = [
+            "Here is a concise, factual summary",
+            "Here is a concise summary",
+            "Here is a summary",
+            "Here is the summary",
+            "Summary:",
+            "Here's a summary"
+        ]
+        
+        # Check for preambles (case insensitive)
+        lower_text = text.lower()
+        for preamble in preambles:
+            if lower_text.startswith(preamble.lower()):
+                # Find the first colon or newline after the preamble
+                idx = text.find(":")
+                if idx != -1:
+                    return text[idx+1:].strip()
+                
+                # If no colon, maybe it just ends with the sentence? 
+                # often lines like "Here is a summary." are followed by newlines.
+                # Let's try splitting by newline if it starts with preamble
+                parts = text.split('\n', 1)
+                if len(parts) > 1:
+                    return parts[1].strip()
+        
+        return text
+
+class Standardizer:
+    def __init__(self, use_llm: bool = True):
+        self.summarizer = OllamaSummarizer() if use_llm else None
+
+    def _get_base64_record(self, record: Dict[str, Any]) -> str:
+        json_str = json.dumps(record)
+        return base64.b64encode(json_str.encode('utf-8')).decode('utf-8')
+
+    def _normalize_name(self, name: Optional[str]) -> str:
+        if not name:
+            return "Unknown"
+        # Basic title casing and whitespace stripping
+        return " ".join(name.split()).title()
+
+    def _normalize_status(self, status_raw: str, source: str) -> str:
+        if not status_raw:
+            return "Unknown"
+        
+        s = status_raw.lower()
+        if source == "TX":
+            if s == "y": return "Active"
+            if s == "n": return "Inactive"
+        elif source == "WA":
+            if "not active" in s: return "Inactive"
+            if "active" in s: return "Active"
+            
+        return "Unknown"
+
+    def _normalize_type(self, type_raw: str) -> str:
+        if not type_raw:
+            return "Other"
+        
+        t = type_raw.lower()
+        if any(x in t for x in ["center", "general residential", "child placing"]):
+            return "Center"
+        if any(x in t for x in ["home", "family"]):
+            return "Home"
+        if "school" in t:
+            return "School"
+        
+        return "Other"
+
+    def _normalize_date(self, date_str: Optional[str]) -> Optional[str]:
+        if not date_str:
+            return None
+        # Attempt minimal parsing for known formats
+        # TX: YYYY-MM-DD...
+        # WA: M/D/YYYY
+        try:
+            if "T" in date_str:
+                return date_str.split("T")[0]
+            if "/" in date_str:
+                parts = date_str.split("/")
+                if len(parts) == 3:
+                     # M/D/YYYY -> YYYY-MM-DD
+                    return f"{parts[2]}-{parts[0].zfill(2)}-{parts[1].zfill(2)}"
+        except Exception:
+            pass
+        return date_str # Fallback to original if parsing fails provided it's string-ish
+
+    def standardize_tx(self, record: Dict[str, Any]) -> Dict[str, Any]:
+        mapped = {}
+        
+        # Identity
+        mapped["id"] = f"TX-{record.get('operation_id', 'UNKNOWN')}"
+        mapped["source_state"] = "TX"
+        mapped["original_record_b64"] = self._get_base64_record(record)
+        
+        mapped["name"] = self._normalize_name(record.get("operation_name"))
+        mapped["type"] = self._normalize_type(record.get("operation_type", ""))
+        mapped["status"] = self._normalize_status(record.get("operation_status", ""), "TX")
+        # Check for temporary closure override
+        if record.get("temporarily_closed") == "YES":
+             mapped["status"] = "Temporarily Closed"
+             
+        mapped["license_date"] = self._normalize_date(record.get("issuance_date"))
+        
+        # Location
+        mapped["address"] = {
+            "full": record.get("location_address", ""),
+            "street": record.get("address_line", ""),
+            "city": record.get("city", ""),
+            "state": record.get("state", ""),
+            "zip": record.get("zipcode", ""),
+            "latitude": float(record.get("location_address_geo", {}).get("latitude") or 0.0),
+            "longitude": float(record.get("location_address_geo", {}).get("longitude") or 0.0)
+        }
+        
+        # Contact
+        mapped["contact"] = {
+            "phone": record.get("phone_number"),
+            "email": record.get("email_address"),
+            "website": record.get("website_address"),
+            "director_name": record.get("administrator_director_name")
+        }
+        
+        # Capacity
+        cap = record.get("total_capacity")
+        mapped["capacity"] = int(cap) if cap and str(cap).isdigit() else None
+        mapped["ages_served"] = record.get("licensed_to_serve_ages")
+        mapped["schedule"] = {
+            "hours": record.get("hours_of_operation"),
+            "days": record.get("days_of_operation")
+        }
+        
+        # Quality (LLM)
+        if self.summarizer:
+            mapped["quality_summary"] = self.summarizer.summarize(record)
+        else:
+            mapped["quality_summary"] = "LLM Summarization Skipped"
+            
+        return mapped
+
+    def standardize_wa(self, record: Dict[str, Any]) -> Dict[str, Any]:
+        mapped = {}
+        
+        # Identity
+        mapped["id"] = f"WA-{record.get('wacompassid', 'UNKNOWN')}"
+        mapped["source_state"] = "WA"
+        mapped["original_record_b64"] = self._get_base64_record(record)
+        
+        # Name preference: DBA > ProviderName
+        raw_name = record.get("doingbusinessas") or record.get("providername")
+        mapped["name"] = self._normalize_name(raw_name)
+        
+        mapped["type"] = self._normalize_type(record.get("facilitytypegeneric", ""))
+        mapped["status"] = self._normalize_status(record.get("latestoperatingstatus", ""), "WA")
+        mapped["license_date"] = self._normalize_date(record.get("initiallicensedate"))
+        
+        # Location
+        mapped["address"] = {
+            "full": f"{record.get('physicalstreetaddress', '')}, {record.get('physicalcity', '')}, {record.get('physicalstate', '')} {record.get('physicalzip', '')}",
+            "street": record.get("physicalstreetaddress", ""),
+            "city": record.get("physicalcity", ""),
+            "state": record.get("physicalstate", ""),
+            "zip": record.get("physicalzip", ""),
+            # Fix typo 'physciallatitude'
+            "latitude": float(record.get("physciallatitude") or 0.0),
+            "longitude": float(record.get("physicallongitude") or 0.0)
+        }
+        
+        # Contact
+        mapped["contact"] = {
+            "phone": record.get("primarycontactphonenumber"),
+            "email": record.get("primarycontactemail"),
+            "website": None, # Not present in sample
+            "director_name": record.get("primarycontactpersonname")
+        }
+        
+        # Capacity
+        cap = record.get("licensecapacity")
+        mapped["capacity"] = int(cap) if cap and str(cap).isdigit() else None
+        
+        start_age = record.get("startingage", "")
+        end_age = record.get("endingage", "")
+        mapped["ages_served"] = f"{start_age} - {end_age}" if start_age or end_age else None
+        
+        mapped["schedule"] = {
+            "hours": None,
+            "days": None
+        }
+        
+        # Quality (LLM)
+        if self.summarizer:
+            mapped["quality_summary"] = self.summarizer.summarize(record)
+        else:
+            mapped["quality_summary"] = "LLM Summarization Skipped"
+            
+        return mapped
+
+def main():
+    parser = argparse.ArgumentParser(description="Unify state daycare data to JSONL")
+    parser.add_argument("--no-llm", action="store_true", help="Skip LLM summarization")
+    parser.add_argument("--limit", type=int, default=None, help="Limit number of records per state for testing")
+    args = parser.parse_args()
+    
+    standardizer = Standardizer(use_llm=not args.no_llm)
+    
+    output_path = "data/unified_daycares.jsonl"
+    print(f"Starting unified processing... writing to {output_path}")
+    
+    # Inputs assumed to be at project root / data (relative to execution from record-flow dir which is 2 levels deep from lynx root)
+    # /Users/jason/workspace1/lynx/data -> ../../data
+    sources = [
+        {"path": "../../data/texas.json", "handler": standardizer.standardize_tx, "name": "Texas"},
+        {"path": "../../data/washington.json", "handler": standardizer.standardize_wa, "name": "Washington"}
+    ]
+    
+    with open(output_path, "w") as outfile:
+        for source in sources:
+            print(f"Processing {source['name']}...")
+            try:
+                with open(source["path"], "r") as f:
+                    data = json.load(f)
+                    
+                count = 0
+                for item in data:
+                    if args.limit and count >= args.limit:
+                        break
+                        
+                    try:
+                        unified = source["handler"](item)
+                        outfile.write(json.dumps(unified) + "\n")
+                        count += 1
+                        if count % 10 == 0:
+                            print(f"  Processed {count} records...", end="\r")
+                    except Exception as e:
+                        print(f"\n  Error processing record: {e}")
+                        
+                print(f"\nCompleted {source['name']}: {count} records written.")
+                
+            except FileNotFoundError:
+                print(f"Error: File {source['path']} not found.")
+    
+    print("Unification complete.")
+
+if __name__ == "__main__":
+    main()
