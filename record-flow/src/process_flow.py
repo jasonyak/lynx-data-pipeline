@@ -3,6 +3,7 @@ import os
 import time
 import argparse
 from enrichment.google_places import find_and_enrich
+from enrichment.gemini_search import enrich_with_gemini
 
 # Configuration
 INPUT_FILE = "data/unified_daycares.jsonl"
@@ -28,8 +29,8 @@ def save_state(index):
 
 def process_record(record):
     """
-    Process a single record.
-    Enriches with Google Places data.
+    Process a single record: Enrich with Google Places, then Gemini Search.
+    Returns None if the record should be dropped.
     """
     try:
         # Enrich with Google Places
@@ -48,6 +49,10 @@ def process_record(record):
         if not state_website and not google_website:
             print(f"Skipping {record.get('id')}: No website available.")
             return None
+
+        # Enrich with Gemini (Insider Profile)
+        # Only run if we haven't dropped it
+        record = enrich_with_gemini(record)
             
     except Exception as e:
         # Don't fail the whole pipeline if enrichment crashes, just log it (or print here)
