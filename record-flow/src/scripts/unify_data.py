@@ -1,90 +1,25 @@
+
+
 import json
-import base64
-import requests
 import datetime
 import argparse
 from typing import Dict, Any, List, Optional
 
-# Configuration
-OLLAMA_URL = "http://localhost:11434/api/generate"
-OLLAMA_MODEL = "llama3.1"
-
-class OllamaSummarizer:
-    def __init__(self, model: str = OLLAMA_MODEL, url: str = OLLAMA_URL):
-        self.model = model
-        self.url = url
-
-    def summarize(self, record: Dict[str, Any]) -> str:
-        """
-        Generates a quality and operations summary using a local Ollama instance.
-        """
-        # Create a simplified version of the record for the prompt to save context/time
-        # We redact ID and Name to focus the LLM on operations as requested
-        context_record = {k: v for k, v in record.items() if 'id' not in k.lower() and 'name' not in k.lower()}
-        
-        prompt = (
-            f"You are a childcare data analyst helping parents evaluating this provider. "
-            f"Write a concise, factual 2-3 sentence summary of their operational quality and history based ONLY on the provided record. "
-            f"Highlight key strengths or risks such as: years in operation (derived from license date), specific deficiency counts (if any), and scale of care. "
-            f"Avoid generic phrases like 'appears to be' or 'good standing'. Use direct, helpful language. "
-            f"IMPORTANT: Start your response directly with the summary. Do NOT say 'Here is a summary' or similar. "
-            f"Do not mention the ID or Name. Record: {json.dumps(context_record)}"
-        )
-        
-        payload = {
-            "model": self.model,
-            "prompt": prompt,
-            "stream": False
-        }
-        
-        try:
-            response = requests.post(self.url, json=payload, timeout=30)
-            response.raise_for_status()
-            raw_summary = response.json().get("response", "").strip()
-            return self._clean_summary(raw_summary)
-        except requests.RequestException as e:
-            print(f"Warning: Ollama summary failed: {e}")
-            return "Summary unavailable."
-
-    def _clean_summary(self, text: str) -> str:
-        """
-        Removes conversational preambles often added by LLMs.
-        """
-        # Common preambles to strip
-        preambles = [
-            "Here is a concise, factual summary",
-            "Here is a concise summary",
-            "Here is a summary",
-            "Here is the summary",
-            "Summary:",
-            "Here's a summary"
-        ]
-        
-        # Check for preambles (case insensitive)
-        lower_text = text.lower()
-        for preamble in preambles:
-            if lower_text.startswith(preamble.lower()):
-                # Find the first colon or newline after the preamble
-                idx = text.find(":")
-                if idx != -1:
-                    return text[idx+1:].strip()
-                
-                # If no colon, maybe it just ends with the sentence? 
-                # often lines like "Here is a summary." are followed by newlines.
-                # Let's try splitting by newline if it starts with preamble
-                parts = text.split('\n', 1)
-                if len(parts) > 1:
-                    return parts[1].strip()
-        
-        return text
 
 class Standardizer:
-    def __init__(self, use_llm: bool = True):
-        self.summarizer = OllamaSummarizer() if use_llm else None
+    def __init__(self):
+        pass
 
-    def _get_base64_record(self, record: Dict[str, Any]) -> str:
-        json_str = json.dumps(record)
-        return base64.b64encode(json_str.encode('utf-8')).decode('utf-8')
+    def _get_formatted_record(self, record: Dict[str, Any]) -> str:
+        """
+        Returns a LLM-friendly key-value text representation of the record.
+        """
+        lines = []
+        for k, v in record.items():
+            val_str = str(v).strip()
+            if val_str:
+                lines.append(f"{k}: {val_str}")
+        return "\n".join(lines)
 
     def _normalize_name(self, name: Optional[str]) -> str:
         if not name:
@@ -144,7 +79,7 @@ class Standardizer:
         # Identity
         mapped["id"] = f"TX-{record.get('operation_id', 'UNKNOWN')}"
         mapped["source_state"] = "TX"
-        mapped["original_record_b64"] = self._get_base64_record(record)
+        mapped["original_record"] = self._get_formatted_record(record)
         
         mapped["name"] = self._normalize_name(record.get("operation_name"))
         mapped["type"] = self._normalize_type(record.get("operation_type", ""))
@@ -183,12 +118,6 @@ class Standardizer:
             "days": record.get("days_of_operation")
         }
         
-        # Quality (LLM)
-        if self.summarizer:
-            mapped["quality_summary"] = self.summarizer.summarize(record)
-        else:
-            mapped["quality_summary"] = "LLM Summarization Skipped"
-            
         return mapped
 
     def standardize_wa(self, record: Dict[str, Any]) -> Dict[str, Any]:
@@ -197,7 +126,7 @@ class Standardizer:
         # Identity
         mapped["id"] = f"WA-{record.get('wacompassid', 'UNKNOWN')}"
         mapped["source_state"] = "WA"
-        mapped["original_record_b64"] = self._get_base64_record(record)
+        mapped["original_record"] = self._get_formatted_record(record)
         
         # Name preference: DBA > ProviderName
         raw_name = record.get("doingbusinessas") or record.get("providername")
@@ -240,21 +169,14 @@ class Standardizer:
             "days": None
         }
         
-        # Quality (LLM)
-        if self.summarizer:
-            mapped["quality_summary"] = self.summarizer.summarize(record)
-        else:
-            mapped["quality_summary"] = "LLM Summarization Skipped"
-            
         return mapped
 
 def main():
     parser = argparse.ArgumentParser(description="Unify state daycare data to JSONL")
-    parser.add_argument("--no-llm", action="store_true", help="Skip LLM summarization")
     parser.add_argument("--limit", type=int, default=None, help="Limit number of records per state for testing")
     args = parser.parse_args()
     
-    standardizer = Standardizer(use_llm=not args.no_llm)
+    standardizer = Standardizer()
     
     output_path = "data/unified_daycares.jsonl"
     print(f"Starting unified processing... writing to {output_path}")
