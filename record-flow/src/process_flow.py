@@ -5,10 +5,20 @@ import argparse
 from enrichment.google_places import find_and_enrich
 from enrichment.gemini_search import enrich_with_gemini
 
-# Configuration
+from collections import defaultdict
+
+# Configurations
 INPUT_FILE = "data/unified_daycares.jsonl"
 OUTPUT_FILE = "data/output.jsonl"
 STATE_FILE = "data/processing_state.json"
+
+# Pricing (USD per 1M tokens)
+PRICING = {
+    "gemini": {
+        "input": 0.50,
+        "output": 3.00
+    }
+}
 
 def load_state():
     """But loads the last processed index from the state file."""
@@ -27,7 +37,7 @@ def save_state(index):
     with open(STATE_FILE, 'w') as f:
         json.dump({"last_processed_index": index}, f)
 
-def process_record(record):
+def process_record(record, cost_tracker):
     """
     Process a single record: Enrich with Google Places, then Gemini Search.
     Returns None if the record should be dropped.
@@ -52,7 +62,12 @@ def process_record(record):
 
         # Enrich with Gemini (Insider Profile)
         # Only run if we haven't dropped it
-        record = enrich_with_gemini(record)
+        record, usage_stats = enrich_with_gemini(record)
+
+        # Track usage
+        if usage_stats:
+            cost_tracker["gemini_enrichment"]["input"] += usage_stats.get("input_tokens", 0)
+            cost_tracker["gemini_enrichment"]["output"] += usage_stats.get("output_tokens", 0)
             
     except Exception as e:
         # Don't fail the whole pipeline if enrichment crashes, just log it (or print here)
@@ -69,6 +84,10 @@ def main():
     os.makedirs(os.path.dirname(OUTPUT_FILE), exist_ok=True)
     
     start_time = time.time()
+    
+    # Initialize Cost Tracker
+    # Structure: step_name -> {'input': int, 'output': int}
+    cost_tracker = defaultdict(lambda: {"input": 0, "output": 0})
     
     if args.resume:
         last_processed_index = load_state()
@@ -102,7 +121,7 @@ def main():
                     continue
                     
                 record = json.loads(line)
-                processed_result = process_record(record)
+                processed_result = process_record(record, cost_tracker)
                 
                 if processed_result:
                     outfile.write(json.dumps(processed_result) + "\n")
@@ -126,6 +145,40 @@ def main():
 
     elapsed_time = time.time() - start_time
     print(f"\nProcessing complete. Processed {processed_count} new records in {elapsed_time:.2f} seconds.")
+    
+    # Print Cost Summary
+    print("\n=== Token Usage & Cost Estimate ===")
+    total_cost = 0.0
+    
+    # Hardcoded mapping to pricing keys for now
+    step_pricing_map = {
+        "gemini_enrichment": "gemini"
+    }
+    
+    for step, tokens in cost_tracker.items():
+        input_tokens = tokens["input"]
+        output_tokens = tokens["output"]
+        
+        pricing_key = step_pricing_map.get(step)
+        if pricing_key and pricing_key in PRICING:
+            rates = PRICING[pricing_key]
+            input_cost = (input_tokens / 1_000_000) * rates["input"]
+            output_cost = (output_tokens / 1_000_000) * rates["output"]
+            step_cost = input_cost + output_cost
+            total_cost += step_cost
+            
+            print(f"Step: {step}")
+            print(f"  Input Tokens:  {input_tokens:,}")
+            print(f"  Output Tokens: {output_tokens:,}")
+            print(f"  Estimated Cost: ${step_cost:.4f}")
+        else:
+             print(f"Step: {step} (No pricing data)")
+             print(f"  Input Tokens:  {input_tokens:,}")
+             print(f"  Output Tokens: {output_tokens:,}")
+             
+    print(f"-----------------------------------")
+    print(f"Total Estimated Cost: ${total_cost:.4f}")
+    print(f"===================================")
 
 if __name__ == "__main__":
     main()

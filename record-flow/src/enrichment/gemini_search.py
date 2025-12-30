@@ -76,8 +76,10 @@ def enrich_with_gemini(record):
     Uses Gemini with Google Search to find qualitative "Insider Profile" data.
     """
     if not client:
-        return record
+        return record, {"input_tokens": 0, "output_tokens": 0}
         
+    usage_stats = {"input_tokens": 0, "output_tokens": 0}
+
     try:
         # Construct search query
         name = record.get("name", "")
@@ -114,6 +116,11 @@ def enrich_with_gemini(record):
             )
         )
         
+        # Extract Token Usage
+        if response.usage_metadata:
+            usage_stats["input_tokens"] = response.usage_metadata.prompt_token_count or 0
+            usage_stats["output_tokens"] = response.usage_metadata.candidates_token_count or 0
+
         # Extract JSON
         try:
              text = response.text.strip()
@@ -137,4 +144,4 @@ def enrich_with_gemini(record):
         print(f"Gemini enrichment failed for {record.get('id')}: {e}")
         record["gemini_search_data"] = {"status": "ERROR", "error": str(e)}
 
-    return record
+    return record, usage_stats
