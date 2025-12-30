@@ -131,7 +131,8 @@ def process_record(record, cost_tracker, scraper=None, local_refiner=None):
                          record["scraped_data"] = raw_scraped_data
 
                  except Exception as e:
-                     logger.warning(f"Scraping failed for {target_url}: {e}")
+                    logger.debug(f"Scraping failed for {target_url}: {e}. Dropping record.")
+                    return None
             
     except Exception as e:
         # Don't fail the whole pipeline if enrichment crashes, just log it (or print here)
