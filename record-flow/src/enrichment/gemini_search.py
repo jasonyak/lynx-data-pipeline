@@ -132,16 +132,16 @@ def enrich_with_gemini(record):
              gemini_data = json.loads(text)
              
              record["gemini_search_data"] = gemini_data
-             print(f"Gemini enriched: {name}")
+             logger.debug(f"Gemini enriched: {name}")
              
         except Exception as e:
-            print(f"Failed to parse Gemini JSON for {name}: {e}")
+            logger.warning(f"Failed to parse Gemini JSON for {name}: {e}")
             # Safeguard against missing text
             raw = getattr(response, 'text', str(response))
             record["gemini_search_data"] = {"status": "FAILED_PARSE", "raw": raw[:200]}
 
     except Exception as e:
-        print(f"Gemini enrichment failed for {record.get('id')}: {e}")
+        logger.error(f"Gemini enrichment failed for {record.get('id')}: {e}")
         record["gemini_search_data"] = {"status": "ERROR", "error": str(e)}
 
     return record, usage_stats

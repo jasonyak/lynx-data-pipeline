@@ -1,9 +1,12 @@
 import json
+import logging
 import os
 import time
 import argparse
 from enrichment.google_places import find_and_enrich
 from enrichment.gemini_search import enrich_with_gemini
+from scraping.scraper import WebsiteScraper
+from analysis.local_ai import LocalRefiner
 
 from collections import defaultdict
 
@@ -11,6 +14,10 @@ from collections import defaultdict
 INPUT_FILE = "data/unified_daycares.jsonl"
 OUTPUT_FILE = "data/output.jsonl"
 STATE_FILE = "data/processing_state.json"
+
+# Configure Logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
 # Pricing (USD per 1M tokens)
 PRICING = {
@@ -37,7 +44,14 @@ def save_state(index):
     with open(STATE_FILE, 'w') as f:
         json.dump({"last_processed_index": index}, f)
 
-def process_record(record, cost_tracker):
+def process_record(record, cost_tracker, scraper=None, local_refiner=None):
+    """
+    Process a single record:
+    1. Enrich with Google Places (already done in batch, but check if needed)
+    2. Deep Scraping (images/text)
+    3. Local Refinement (CLIP/Dedupe) -> Reduces data for Gemini
+    4. Enrich with Gemini (using refined data)
+    """
     """
     Process a single record: Enrich with Google Places, then Gemini Search.
     Returns None if the record should be dropped.
@@ -57,7 +71,7 @@ def process_record(record, cost_tracker):
         google_website = google_data.get("contact", {}).get("website")
         
         if not state_website and not google_website:
-            print(f"Skipping {record.get('id')}: No website available.")
+            logger.debug(f"Skipping {record.get('id')}: No website available.")
             return None
 
         # Enrich with Gemini (Insider Profile)
@@ -68,10 +82,60 @@ def process_record(record, cost_tracker):
         if usage_stats:
             cost_tracker["gemini_enrichment"]["input"] += usage_stats.get("input_tokens", 0)
             cost_tracker["gemini_enrichment"]["output"] += usage_stats.get("output_tokens", 0)
+
+        # Website Scraping (Deep)
+        if scraper:
+             # Prefer website from Google, then state record
+             target_url = google_website or state_website
+             if target_url:
+                 try:
+                     logger.debug(f"Scraping website: {target_url} ...")
+                     raw_scraped_data = scraper.scrape(target_url)
+                     
+                     # Local Refinement (Simulate 'intelligence')
+                     if local_refiner and raw_scraped_data and raw_scraped_data.get("assets_found", 0) > 0:
+                         logger.debug(f"Refining scraped data for {target_url}...")
+                         
+                         # 1. Filter Images
+                         all_images = [a['local_path'] for a in raw_scraped_data.get('assets', []) if a['type'] == 'image']
+                         top_images = local_refiner.rank_images(all_images, top_n=10)
+                         
+                         # 2. Filter PDFs
+                         all_pdfs = [a['local_path'] for a in raw_scraped_data.get('assets', []) if a['type'] == 'pdf']
+                         top_pdfs = local_refiner.filter_pdfs(all_pdfs, top_n=5)
+                         
+                         # 3. Refine Text
+                         all_text_files = [a['local_path'] for a in raw_scraped_data.get('assets', []) if a['type'] == 'text']
+                         # Text files are in base_dir, so dirname gets the base_dir
+                         domain_dir = os.path.dirname(all_text_files[0]) if all_text_files else None
+                         clean_text_path = None
+                         if domain_dir:
+                             clean_text_path = os.path.join(domain_dir, "cleaned_content.txt")
+                             clean_text_path = local_refiner.refine_text(all_text_files, clean_text_path)
+                         
+                         # Construct final refined object
+                         refined_data = {
+                             "root_url": raw_scraped_data.get("root_url"),
+                             "timestamp": raw_scraped_data.get("timestamp"),
+                             "verified_images": top_images,
+                             "pdf_assets": top_pdfs,
+                             "derived_body_text_path": clean_text_path,
+                             "raw_stats": {
+                                 "original_images": len(all_images),
+                                 "original_text_files": len(all_text_files)
+                             }
+                         }
+                         record["scraped_data"] = refined_data
+                     else:
+                         # Fallback to raw if logic fails or no assets
+                         record["scraped_data"] = raw_scraped_data
+
+                 except Exception as e:
+                     logger.warning(f"Scraping failed for {target_url}: {e}")
             
     except Exception as e:
         # Don't fail the whole pipeline if enrichment crashes, just log it (or print here)
-        print(f"Enrichment failed for record {record.get('id', 'unknown')}: {e}")
+        logger.error(f"Enrichment failed for record {record.get('id', 'unknown')}: {e}")
         
     return record
 
@@ -88,6 +152,10 @@ def main():
     # Initialize Cost Tracker
     # Structure: step_name -> {'input': int, 'output': int}
     cost_tracker = defaultdict(lambda: {"input": 0, "output": 0})
+    
+    # Initialize Scraper & Local AI
+    scraper = WebsiteScraper()
+    local_refiner = LocalRefiner()
     
     if args.resume:
         last_processed_index = load_state()
@@ -121,7 +189,7 @@ def main():
                     continue
                     
                 record = json.loads(line)
-                processed_result = process_record(record, cost_tracker)
+                processed_result = process_record(record, cost_tracker, scraper=scraper, local_refiner=local_refiner)
                 
                 if processed_result:
                     outfile.write(json.dumps(processed_result) + "\n")

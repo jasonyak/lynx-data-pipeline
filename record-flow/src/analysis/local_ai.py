@@ -1,0 +1,195 @@
+
+import os
+import torch
+import logging
+from PIL import Image
+from transformers import CLIPProcessor, CLIPModel
+from collections import Counter
+import re
+
+logger = logging.getLogger(__name__)
+
+class LocalRefiner:
+    def __init__(self):
+        self.device = "cuda" if torch.cuda.is_available() else ("mps" if torch.backends.mps.is_available() else "cpu")
+        self.clip_model_name = "openai/clip-vit-base-patch32"
+        self._clip_model = None
+        self._clip_processor = None
+        logger.info(f"LocalRefiner initialized on device: {self.device}")
+
+    @property
+    def clip_model(self):
+        if self._clip_model is None:
+            logger.debug(f"Loading CLIP model {self.clip_model_name}...")
+            self._clip_model = CLIPModel.from_pretrained(self.clip_model_name).to(self.device)
+            self._clip_processor = CLIPProcessor.from_pretrained(self.clip_model_name)
+        return self._clip_model
+
+    @property
+    def clip_processor(self):
+        if self._clip_processor is None:
+            self.clip_model # Triggers load
+        return self._clip_processor
+
+    def rank_images(self, image_paths, top_n=10):
+        """
+        Ranks images based on relevance to daycare prompts using CLIP.
+        Returns top_n image paths.
+        """
+        if not image_paths:
+            return []
+            
+        # Deduplicate paths (scraper might report same file multiple times if found on multiple pages)
+        unique_paths = list(set(image_paths))
+            
+        # Filter out obvious junk first (very small files that might have slipped through)
+        valid_paths = [p for p in unique_paths if os.path.exists(p) and os.path.getsize(p) > 5000]
+        if not valid_paths:
+            return []
+
+        logger.debug(f"Ranking {len(valid_paths)} unique images (from {len(image_paths)} occurrences) with CLIP...")
+        
+        positive_prompts = [
+            "daycare classroom with educational toys", "safe fenced outdoor playground", 
+            "children napping on cots", "clean toddler bathroom with small sinks",
+            "children eating healthy food at table", "children art work on walls",
+            "secure entrance gate with keypad", "teacher reading to circle of kids",
+            "bright montessori shelf with materials", "soft play area for infants",
+            "happy children playing together", "daycare building exterior"
+        ]
+        negative_prompts = [
+            "icon", "logo", "website banner", "text document", "flyer", "map", 
+            "blurry image", "stock photo of business people", "closeup of food only",
+            "empty parking lot", "abstract background pattern", "clipart vector graphic"
+        ]
+        
+        text_inputs = positive_prompts + negative_prompts
+        
+        try:
+            images = []
+            loaded_paths = []
+            for p in valid_paths:
+                try:
+                    images.append(Image.open(p).convert("RGB"))
+                    loaded_paths.append(p)
+                except Exception as e:
+                    logger.debug(f"Failed to load image for scoring {p}: {e}")
+
+            if not images:
+                return []
+
+            inputs = self.clip_processor(
+                text=text_inputs, images=images, return_tensors="pt", padding=True
+            ).to(self.device)
+
+            with torch.no_grad():
+                outputs = self.clip_model(**inputs)
+                # logits_per_image: [num_images, num_text_prompts]
+                logits_per_image = outputs.logits_per_image 
+                probs = logits_per_image.softmax(dim=1)
+
+            # Score = Sum(Positive PROBS) - Sum(Negative PROBS)
+            # Positive indices: 0 to len(positive)-1
+            # Negative indices: len(positive) to end
+            pos_indices = list(range(len(positive_prompts)))
+            neg_indices = list(range(len(positive_prompts), len(text_inputs)))
+
+            scores = []
+            for idx, p_path in enumerate(loaded_paths):
+                pos_score = probs[idx][pos_indices].sum().item()
+                neg_score = probs[idx][neg_indices].sum().item()
+                final_score = pos_score - neg_score
+                scores.append((p_path, final_score))
+            
+            # Sort by score descending
+            scores.sort(key=lambda x: x[1], reverse=True)
+            
+            # Select top N
+            top_images = [x[0] for x in scores[:top_n]]
+            logger.debug(f"Top 3 Image Scores: {[f'{os.path.basename(x[0])}: {x[1]:.2f}' for x in scores[:3]]}")
+            
+            return top_images
+
+        except Exception as e:
+            logger.error(f"Error filtering images with CLIP: {e}", exc_info=True)
+            # Fallback: just return the first N
+            return valid_paths[:top_n]
+
+    def filter_pdfs(self, pdf_paths, top_n=5):
+        """
+        Simple keyword-based scoring for PDFs.
+        """
+        if not pdf_paths:
+            return []
+
+        priority_keywords = ["handbook", "policy", "parent", "tuition", "rates", "enroll", "schedule", "calendar"]
+        low_priority = ["menu", "lunch", "flyer", "news", "update"]
+
+        scored_pdfs = []
+        for p in pdf_paths:
+            filename = os.path.basename(p).lower()
+            score = 0
+            for kw in priority_keywords:
+                if kw in filename:
+                    score += 2
+            for kw in low_priority:
+                if kw in filename:
+                    score -= 1
+            scored_pdfs.append((p, score))
+        
+        # Sort descending
+        scored_pdfs.sort(key=lambda x: x[1], reverse=True)
+        return [x[0] for x in scored_pdfs[:top_n]]
+
+    def refine_text(self, text_files, output_path):
+        """
+        Consolidates text from multiple files, removing repeating boilerplate lines.
+        Saves result to output_path.
+        Returns output_path if successful, None otherwise.
+        """
+        if not text_files:
+            return None
+
+        # 1. Read all files
+        all_lines_map = {} # filename -> [lines]
+        line_counts = Counter()
+        
+        for p in text_files:
+            try:
+                with open(p, "r", encoding="utf-8") as f:
+                    content = f.read()
+                    # Skip the URL line if present (e.g. "URL: ...")
+                    lines = content.split('\n')
+                    cleaned_lines = [l.strip() for l in lines if l.strip() and not l.startswith("URL:")]
+                    all_lines_map[p] = cleaned_lines
+                    for l in cleaned_lines:
+                        line_counts[l] += 1
+            except Exception as e:
+                logger.warning(f"Failed to read text file {p}: {e}")
+
+        # 2. Identify boilerplate (lines appearing in > 50% of files)
+        threshold = max(2, len(text_files) * 0.5)
+        boilerplate_lines = {line for line, count in line_counts.items() if count > threshold}
+        
+        logger.debug(f"Identified {len(boilerplate_lines)} boilerplate lines (appearing in >{threshold} files).")
+
+        # 3. Construct unique body
+        final_text = []
+        for p in text_files:
+            file_lines = all_lines_map.get(p, [])
+            unique_lines = [l for l in file_lines if l not in boilerplate_lines]
+            if unique_lines:
+                final_text.append(f"--- Source: {os.path.basename(p)} ---")
+                final_text.extend(unique_lines)
+                final_text.append("\n")
+
+        full_content = "\n".join(final_text)
+        
+        # Save
+        try:
+            with open(output_path, "w", encoding="utf-8") as f:
+                f.write(full_content)
+            return output_path
+        except Exception as e:
+            logger.error(f"Failed to save cleaned text: {e}")
+            return None

@@ -40,18 +40,18 @@ def find_and_enrich(record):
     full_query = f"{name} {address_query}".strip()
 
     if not full_query:
-        logger.warning(f"Insufficient data to search for record {record.get('id')}")
+        logger.debug(f"Insufficient data to search for record {record.get('id')}")
         return record
 
     try:
         place_id = _search_place(full_query)
         if place_id:
-            logger.info(f"Found Place ID {place_id} for {name}")
+            logger.debug(f"Found Place ID {place_id} for {name}")
             details = _get_place_details(place_id)
             if details:
                 record["google_data"] = details
         else:
-            logger.info(f"No Google Place found for {name}")
+            logger.debug(f"No Google Place found for {name}")
             # Optionally record that we tried and failed so we don't retry forever?
             record["google_data"] = {"status": "NOT_FOUND", "searched_query": full_query}
             
