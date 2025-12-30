@@ -3,6 +3,7 @@
 import json
 import datetime
 import argparse
+import random
 from typing import Dict, Any, List, Optional
 
 
@@ -174,6 +175,7 @@ class Standardizer:
 def main():
     parser = argparse.ArgumentParser(description="Unify state daycare data to JSONL")
     parser.add_argument("--limit", type=int, default=None, help="Limit number of records per state for testing")
+    parser.add_argument("--random", action="store_true", help="Randomly sample records if limit is set")
     args = parser.parse_args()
     
     standardizer = Standardizer()
@@ -194,11 +196,18 @@ def main():
             try:
                 with open(source["path"], "r") as f:
                     data = json.load(f)
+
+                if args.limit:
+                    if args.random:
+                        print(f"  Randomly sampling {args.limit} records...")
+                        # Sample indices or items. random.sample throws if k > len
+                        sample_size = min(args.limit, len(data))
+                        data = random.sample(data, sample_size)
+                    else:
+                        data = data[:args.limit]
                     
                 count = 0
                 for item in data:
-                    if args.limit and count >= args.limit:
-                        break
                         
                     try:
                         unified = source["handler"](item)
