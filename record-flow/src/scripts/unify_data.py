@@ -1,9 +1,9 @@
 
-
 import json
 import datetime
 import argparse
 import random
+import re
 from typing import Dict, Any, List, Optional
 
 
@@ -74,6 +74,32 @@ class Standardizer:
             pass
         return date_str # Fallback to original if parsing fails provided it's string-ish
 
+    def _normalize_phone(self, phone_raw: Optional[str]) -> Optional[str]:
+        if not phone_raw:
+            return None
+        
+        # Remove all non-digit characters
+        digits = re.sub(r"\D", "", str(phone_raw))
+        
+        # Handle leading 1 (US country code)
+        if len(digits) == 11 and digits.startswith("1"):
+            digits = digits[1:]
+            
+        if len(digits) == 10:
+            return digits
+            
+        return None
+
+    def _normalize_email(self, email_raw: Optional[str]) -> Optional[str]:
+        if not email_raw:
+            return None
+            
+        email = str(email_raw).strip().lower()
+        if "@" in email and "." in email:
+            return email
+            
+        return None
+
     def standardize_tx(self, record: Dict[str, Any]) -> Dict[str, Any]:
         mapped = {}
         
@@ -104,8 +130,8 @@ class Standardizer:
         
         # Contact
         mapped["contact"] = {
-            "phone": record.get("phone_number"),
-            "email": record.get("email_address"),
+            "phone": self._normalize_phone(record.get("phone_number")),
+            "email": self._normalize_email(record.get("email_address")),
             "website": record.get("website_address"),
             "director_name": record.get("administrator_director_name")
         }
@@ -151,8 +177,8 @@ class Standardizer:
         
         # Contact
         mapped["contact"] = {
-            "phone": record.get("primarycontactphonenumber"),
-            "email": record.get("primarycontactemail"),
+            "phone": self._normalize_phone(record.get("primarycontactphonenumber")),
+            "email": self._normalize_email(record.get("primarycontactemail")),
             "website": None, # Not present in sample
             "director_name": record.get("primarycontactpersonname")
         }
@@ -190,12 +216,25 @@ def main():
         {"path": "../../data/washington.json", "handler": standardizer.standardize_wa, "name": "Washington"}
     ]
     
+
+
+    
+    seen_entries = set()
+    drop_counts = {
+        "missing_name": 0,
+        "missing_address": 0,
+        "inactive": 0,
+        "duplicate": 0
+    }
+    
     with open(output_path, "w") as outfile:
         for source in sources:
             print(f"Processing {source['name']}...")
             try:
                 with open(source["path"], "r") as f:
                     data = json.load(f)
+                
+                print(f"  Found {len(data)} records in input file.")
 
                 if args.limit:
                     if args.random:
@@ -211,6 +250,33 @@ def main():
                         
                     try:
                         unified = source["handler"](item)
+                        
+                        # 1. Check Name
+                        if unified.get("name") == "Unknown" or not unified.get("name"):
+                            drop_counts["missing_name"] += 1
+                            continue
+
+                        # 2. Check Address
+                        full_address = unified.get("address", {}).get("full", "")
+                        if not full_address:
+                            drop_counts["missing_address"] += 1
+                            continue
+                            
+                        # 3. Check Status
+                        if unified.get("status") != "Active":
+                            drop_counts["inactive"] += 1
+                            continue
+                        
+                        # 4. Check Duplicate (Content-based fingerprint)
+                        # Use a tuple for the key
+                        fingerprint = (unified.get("name"), full_address)
+                        
+                        if fingerprint in seen_entries:
+                            drop_counts["duplicate"] += 1
+                            continue
+                        else:
+                            seen_entries.add(fingerprint)
+                            
                         outfile.write(json.dumps(unified) + "\n")
                         count += 1
                         if count % 10 == 0:
@@ -224,6 +290,10 @@ def main():
                 print(f"Error: File {source['path']} not found.")
     
     print("Unification complete.")
+    print("\nDropped Records Summary:")
+    for reason, count in drop_counts.items():
+        print(f"  {reason}: {count}")
+
 
 if __name__ == "__main__":
     main()
