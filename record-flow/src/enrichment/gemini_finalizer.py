@@ -2,11 +2,11 @@ import os
 import io
 import json
 import logging
-import base64
-from typing import List, Dict, Any, Tuple
+from typing import List, Dict, Any, Tuple, Optional, Literal
 from config import GEMINI_MODEL_ID
 from google import genai
 from google.genai import types
+from pydantic import BaseModel, Field
 
 # Try importing PIL for image resizing
 try:
@@ -27,53 +27,58 @@ else:
     logger.warning("GEMINI_API_KEY not found. Gemini Finalizer will be skipped.")
     client = None
 
-FINAL_SCHEMA = """
-{
-  "marketing_content": {
-    "headline": "4-7 words. The 'Title'. Specific and weirdly clear. (e.g. 'Montessori Home with Large Yard' or 'Bright Horizons at The Domain').",
-    "sub_headline": "1 sentence. The 'Hook'. Key logistics + vibe. (e.g. 'Full-time care for infants to pre-k with a focus on outdoor play and organic meals.').",
-    "description": "2 paragraphs. The 'Details'. Informative, warm, and natural. Tells the story of the program, the director, and the space without sounding like a brochure."
-  },
-  "structured_data": {
-    "philosophy": "Enum: ['Montessori', 'Reggio', 'Play-Based', 'Academic', 'Faith-Based', 'Waldorf', 'General']",
-    "schedule_type": "Enum: ['Full-Time', 'Part-Time', 'Both']",
-    "price_range": "Enum: ['$', '$$', '$$$', '$$$$']",
-    "availability_status": "Enum: ['Waitlist', 'Open Enrollment', 'Call to Confirm']",
-    "min_age_months": "Integer or null",
-    "max_age_months": "Integer or null",
-    "meals_provided": "Boolean",
-    "snacks_provided": "Boolean"
-  },
-  "parent_survival_guide": {
-    "communication_method": "Enum: ['App (Photos/Updates)', 'Email/Text', 'Paper Daily Sheet', 'Verbal Only']",
-    "potty_training_support": "Enum: ['Fully Supported', 'Assisted', 'Must Be Trained']",
-    "screen_time_policy": "Enum: ['Zero Screen Time', 'Educational Only', 'TV/Movie Time Occasional']"
-  },
-  "search_tags": [
-    "List of 5-10 standardized tags (e.g., 'cloth-diaper-friendly', 'camera-access', 'organic-food', 'security-guard')"
-  ],
-  "insider_insight": {
-    "sentiment_summary": "A 2-3 sentence summary of parent reputation.",
-    "atmosphere": "Single-word vibe check (e.g., 'Academic', 'Cozy', 'Chaotic', 'Strict').",
-    "red_flags": ["List of potential concerns"],
-    "parent_tips": ["Helpful hints"]
-  },
-  "media_selection": {
-    "best_thumbnail_path": "String (best representative image path from inputs, EXACT MATCH)",
-    "selection_reason": "String"
-  },
-  "ranking": {
-    "trust_score": "Integer (0-100)",
-    "score_breakdown": {
-      "safety_and_ratio": "Integer (0-30)",
-      "teacher_quality": "Integer (0-30)",
-      "learning_and_growth": "Integer (0-25)",
-      "cleanliness_facilities": "Integer (0-15)"
-    },
-    "ranking_tier": "Enum: ['Top Rated', 'Verified', 'Standard', 'Needs Review']"
-  }
-}
-"""
+# --- Pydantic Models for Structured Output ---
+
+class MarketingContent(BaseModel):
+    headline: str = Field(description="4-7 words. The 'Title'. Specific and weirdly clear. (e.g. 'Montessori Home with Large Yard' or 'Bright Horizons at The Domain').")
+    sub_headline: str = Field(description="1 sentence. The 'Hook'. Key logistics + vibe. (e.g. 'Full-time care for infants to pre-k with a focus on outdoor play and organic meals.').")
+    description: str = Field(description="2 paragraphs. The 'Details'. Informative, warm, and natural. Tells the story of the program, the director, and the space without sounding like a brochure.")
+
+class StructuredData(BaseModel):
+    philosophy: Literal['Montessori', 'Reggio', 'Play-Based', 'Academic', 'Faith-Based', 'Waldorf', 'General']
+    schedule_type: Literal['Full-Time', 'Part-Time', 'Both']
+    price_range: Literal['$', '$$', '$$$', '$$$$']
+    availability_status: Literal['Waitlist', 'Open Enrollment', 'Call to Confirm']
+    min_age_months: Optional[int]
+    max_age_months: Optional[int]
+    meals_provided: bool
+    snacks_provided: bool
+
+class ParentSurvivalGuide(BaseModel):
+    communication_method: Literal['App (Photos/Updates)', 'Email/Text', 'Paper Daily Sheet', 'Verbal Only']
+    potty_training_support: Literal['Fully Supported', 'Assisted', 'Must Be Trained']
+    screen_time_policy: Literal['Zero Screen Time', 'Educational Only', 'TV/Movie Time Occasional']
+
+class InsiderInsight(BaseModel):
+    sentiment_summary: str = Field(description="A 2-3 sentence summary of parent reputation.")
+    atmosphere: str = Field(description="Single-word vibe check (e.g., 'Academic', 'Cozy', 'Chaotic', 'Strict').")
+    red_flags: List[str] = Field(description="List of potential concerns")
+    parent_tips: List[str] = Field(description="Helpful hints")
+
+class MediaSelection(BaseModel):
+    best_thumbnail_path: str = Field(description="Best representative image path from inputs, EXACT MATCH")
+    selection_reason: str
+
+class ScoreBreakdown(BaseModel):
+    safety_and_ratio: int = Field(ge=0, le=30)
+    teacher_quality: int = Field(ge=0, le=30)
+    learning_and_growth: int = Field(ge=0, le=25)
+    cleanliness_facilities: int = Field(ge=0, le=15)
+
+class Ranking(BaseModel):
+    trust_score: int = Field(ge=0, le=100)
+    score_breakdown: ScoreBreakdown
+    ranking_tier: Literal['Top Rated', 'Verified', 'Standard', 'Needs Review']
+
+class DaycareRecord(BaseModel):
+    marketing_content: MarketingContent
+    structured_data: StructuredData
+    parent_survival_guide: ParentSurvivalGuide
+    search_tags: List[str] = Field(description="List of 5-10 standardized tags (e.g., 'cloth-diaper-friendly', 'camera-access', 'organic-food', 'security-guard')")
+    insider_insight: InsiderInsight
+    media_selection: MediaSelection
+    ranking: Ranking
+
 
 def _resize_image_to_bytes(image_path: str, max_dim: int = 500) -> bytes:
     """
@@ -159,6 +164,7 @@ def enrich_with_gemini_finalizer(record: Dict[str, Any]) -> Tuple[Dict[str, Any]
                 })
         
         # 3. Construct Prompt
+        # Note: Schema is not included in the text prompt anymore, it's passed via config directly.
         prompt_text = f"""
         You are an expert childcare analyst.
         Analyze the provided data (Basic Record, Research, Website Content) and photos.
@@ -170,22 +176,13 @@ def enrich_with_gemini_finalizer(record: Dict[str, Any]) -> Tuple[Dict[str, Any]
         2. Parents care about Safety, Love, and Learning.
         3. For 'marketing_content', follow the "Essential Trio" format strictly.
         4. Choose the best thumbnail from the provided images and return its EXACT original path from the input list.
-        
-        Schema:
-        {FINAL_SCHEMA}
-        
-        Return ONLY valid JSON.
         """
         
         # 4. Call Gemini
-        contents = [prompt_text] + context_parts
-        
-        # Add images to contents. 
-        # For google-genai SDK, usually mix text and types.Part
-        # We need to construct types.Content or list of parts
-        
+        # We need to explicitly wrap images as Parts
         final_contents = []
         final_contents.append(prompt_text)
+        
         for part in context_parts:
             final_contents.append(part)
             
@@ -197,7 +194,26 @@ def enrich_with_gemini_finalizer(record: Dict[str, Any]) -> Tuple[Dict[str, Any]
             model=GEMINI_MODEL_ID,
             contents=final_contents,
             config=types.GenerateContentConfig(
-                response_mime_type="application/json"
+                response_mime_type="application/json",
+                response_schema=DaycareRecord,
+                safety_settings=[
+                    types.SafetySetting(
+                        category="HARM_CATEGORY_DANGEROUS_CONTENT",
+                        threshold="BLOCK_NONE"
+                    ),
+                    types.SafetySetting(
+                        category="HARM_CATEGORY_HATE_SPEECH",
+                        threshold="BLOCK_NONE"
+                    ),
+                    types.SafetySetting(
+                        category="HARM_CATEGORY_HARASSMENT",
+                        threshold="BLOCK_NONE"
+                    ),
+                    types.SafetySetting(
+                        category="HARM_CATEGORY_SEXUALLY_EXPLICIT",
+                        threshold="BLOCK_NONE"
+                    ),
+                ]
             )
         )
         
@@ -207,24 +223,17 @@ def enrich_with_gemini_finalizer(record: Dict[str, Any]) -> Tuple[Dict[str, Any]
             usage_stats["output_tokens"] = response.usage_metadata.candidates_token_count or 0
             
         try:
+             # With Structured Outputs, the parsed object is often available directly, 
+             # but to be safe and consistent with standard text handling:
              text = response.text.strip()
-             
-             # Clean Markdown Code Blocks
-             if text.startswith("```json"):
-                 text = text[7:]
-             elif text.startswith("```"):
-                 text = text[3:]
-             if text.endswith("```"):
-                 text = text[:-3]
-                 
-             text = text.strip()
-             
              final_data = json.loads(text)
+             
              record["finalized_record"] = final_data
              logger.info(f"Finalized record for {record.get('name')}")
+             
         except Exception as e:
-            logger.error(f"Failed to parse final JSON: {e}")
-            logger.debug(f"Raw Text: {response.text}") # Debug log
+            logger.error(f"Failed to parse final JSON (even with structured output): {e}")
+            logger.debug(f"Raw Text: {response.text}")
             record["finalized_record"] = {"error": str(e), "raw": response.text[:1000]}
 
     except Exception as e:
