@@ -9,9 +9,21 @@ logger = logging.getLogger(__name__)
 
 GOOGLE_PLACES_API_KEY = os.environ.get("GOOGLE_PLACES_API_KEY")
 
+import hashlib
+import json
+
+def _get_cache_path(query):
+    """Generates a cache file path based on the MD5 hash of the query."""
+    cache_dir = os.path.join("data", "cache", "google_places")
+    os.makedirs(cache_dir, exist_ok=True)
+    
+    query_hash = hashlib.md5(query.encode("utf-8")).hexdigest()
+    return os.path.join(cache_dir, f"{query_hash}.json")
+
 def find_and_enrich(record):
     """
     Orchestrates the enrichment of a daycare record with Google Places data.
+    Includes caching to prevent redundant API calls.
     """
     if not GOOGLE_PLACES_API_KEY:
         logger.warning("GOOGLE_PLACES_API_KEY not set. Skipping enrichment.")
@@ -43,6 +55,18 @@ def find_and_enrich(record):
         logger.debug(f"Insufficient data to search for record {record.get('id')}")
         return record
 
+    # --- Caching Logic ---
+    cache_path = _get_cache_path(full_query)
+    if os.path.exists(cache_path):
+        try:
+            with open(cache_path, "r") as f:
+                cached_data = json.load(f)
+            logger.debug(f"Cache HIT for {name}")
+            record["google_data"] = cached_data
+            return record
+        except Exception as e:
+            logger.warning(f"Failed to read cache for {name}, re-fetching: {e}")
+
     try:
         place_id = _search_place(full_query)
         if place_id:
@@ -50,10 +74,22 @@ def find_and_enrich(record):
             details = _get_place_details(place_id)
             if details:
                 record["google_data"] = details
+                # Save to cache
+                try:
+                    with open(cache_path, "w") as f:
+                        json.dump(details, f)
+                except Exception as e:
+                    logger.warning(f"Failed to write cache for {name}: {e}")
         else:
             logger.debug(f"No Google Place found for {name}")
-            # Optionally record that we tried and failed so we don't retry forever?
-            record["google_data"] = {"status": "NOT_FOUND", "searched_query": full_query}
+            not_found_data = {"status": "NOT_FOUND", "searched_query": full_query}
+            record["google_data"] = not_found_data
+            # Cache NOT_FOUND result too, to avoid re-searching
+            try:
+                with open(cache_path, "w") as f:
+                    json.dump(not_found_data, f)
+            except Exception as e:
+                logger.warning(f"Failed to write cache for {name}: {e}")
             
     except Exception as e:
         logger.error(f"Error enriching {name}: {e}")
@@ -61,6 +97,7 @@ def find_and_enrich(record):
     return record
 
 def _search_place(query):
+    # ... (unchanged) ...
     """
     Uses Text Search (New) or Find Place (Legacy) to get a Place ID.
     Using Text Search (New) is often more robust but costs more. 
@@ -90,6 +127,7 @@ from PIL import Image
 # ... (rest of imports)
 
 def _download_and_process_image(url, output_path, max_width=1000):
+    # ... (unchanged) ...
     """
     Downloads an image from a URL, resizes it if needed, and saves it.
     """
@@ -124,6 +162,7 @@ def _get_place_details(place_id):
     fields = [
         "place_id",
         "name",
+        "business_status", # Added field
         "formatted_address",
         "formatted_phone_number",
         "website",
@@ -158,6 +197,7 @@ def _get_place_details(place_id):
         structured_data = {
             "place_id": result.get("place_id"),
             "name": result.get("name"),
+            "business_status": result.get("business_status"), # Added field
             "address": result.get("formatted_address"),
             "contact": {
                 "phone": result.get("formatted_phone_number"),
@@ -201,3 +241,4 @@ def _get_place_details(place_id):
         return structured_data
         
     return None
+

@@ -20,6 +20,10 @@ STATE_FILE = "data/processing_state.json"
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
+# Suppress google_genai AFC info logs
+logging.getLogger("google_genai.models").setLevel(logging.WARNING)
+logging.getLogger("httpx").setLevel(logging.WARNING)
+
 # Pricing (USD per 1M tokens)
 PRICING = {
     "gemini": {
@@ -67,12 +71,21 @@ def process_record(record, cost_tracker, scraper=None, local_refiner=None):
             print(f"Skipping {record.get('id')}: Google Place not found.")
             return None
             
+        # --- Status Filter Optimization ---
+        # Assuming google_places cost tracking would be here if implemented,
+        # and the instruction implies this check comes after any google_places processing.
+        business_status = google_data.get("business_status")
+        if not business_status or business_status == "CLOSED_PERMANENTLY":
+            logger.info(f"Skipping {record.get('name')} - Invalid Status: {business_status}")
+            return None
+        # ----------------------------------
+
         # Check for website in strict mode: must have website in either source
         state_website = record.get("contact", {}).get("website")
         google_website = google_data.get("contact", {}).get("website")
         
         if not state_website and not google_website:
-            logger.debug(f"Skipping {record.get('id')}: No website available.")
+            logger.info(f"Skipping {record.get('name')} - No website available.")
             return None
 
         # Enrich with Gemini (Insider Profile - "Research Phase")
@@ -150,6 +163,7 @@ def process_record(record, cost_tracker, scraper=None, local_refiner=None):
 def main():
     parser = argparse.ArgumentParser(description="Process daycare records.")
     parser.add_argument("--resume", action="store_true", help="Resume from the last processed index.")
+    parser.add_argument("--limit", type=int, default=None, help="Stop after processing N records.")
     args = parser.parse_args()
 
     # Ensure data directory exists for state/output if input is elsewhere (though input is in data/)
@@ -187,6 +201,11 @@ def main():
     
     with open(INPUT_FILE, 'r') as infile, open(OUTPUT_FILE, 'a') as outfile:
         for i, line in enumerate(infile):
+            # Check limit
+            if args.limit and processed_count >= args.limit:
+                print(f"Limit of {args.limit} records reached. Stopping.")
+                break
+
             # Skip lines already processed
             if i <= last_processed_index:
                 continue
