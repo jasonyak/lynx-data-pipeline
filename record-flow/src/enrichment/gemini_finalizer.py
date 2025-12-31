@@ -32,12 +32,12 @@ else:
 class MarketingContent(BaseModel):
     headline: str = Field(description="4-7 words. The 'Title'. Specific and weirdly clear. (e.g. 'Montessori Home with Large Yard' or 'Bright Horizons at The Domain').")
     sub_headline: str = Field(description="1 sentence. The 'Hook'. Key logistics + vibe. (e.g. 'Full-time care for infants to pre-k with a focus on outdoor play and organic meals.').")
-    description: str = Field(description="2 paragraphs. The 'Details'. Informative, warm, and natural. Tells the story of the program, the director, and the space without sounding like a brochure.")
+    description: str = Field(max_length=600, description="Max 600 chars. 2 paragraphs. The 'Details'. Informative, warm, and natural. Tells the story of the program, the director, and the space without sounding like a brochure.")
 
 class StructuredData(BaseModel):
     philosophy: Literal['Montessori', 'Reggio', 'Play-Based', 'Academic', 'Faith-Based', 'Waldorf', 'General']
     schedule_type: Literal['Full-Time', 'Part-Time', 'Both']
-    price_range: Literal['$', '$$', '$$$', '$$$$']
+    price_range: Literal['$', '$$', '$$$', '$$$$'] = Field(description="Estimated monthly tuition: $ (<$1000), $$ ($1000-$1800), $$$ ($1800-$2800), $$$$ (>$2800)")
     availability_status: Literal['Waitlist', 'Open Enrollment', 'Call to Confirm']
     min_age_months: Optional[int]
     max_age_months: Optional[int]
@@ -68,7 +68,7 @@ class ScoreBreakdown(BaseModel):
 class Ranking(BaseModel):
     trust_score: int = Field(ge=0, le=100)
     score_breakdown: ScoreBreakdown
-    ranking_tier: Literal['Top Rated', 'Verified', 'Standard', 'Needs Review']
+    ranking_tier: Literal['Top Rated', 'Verified', 'Standard', 'Needs Review'] = Field(description="Strict Tiers: Top Rated (95-100, Flawless), Verified (80-94, Great), Standard (50-79, Safe/Average), Needs Review (<50, Red Flags).")
 
 class DaycareRecord(BaseModel):
     marketing_content: MarketingContent
@@ -166,12 +166,18 @@ def enrich_with_gemini_finalizer(record: Dict[str, Any]) -> Tuple[Dict[str, Any]
         # 3. Construct Prompt
         # Note: Schema is not included in the text prompt anymore, it's passed via config directly.
         prompt_text = f"""
-        You are an expert childcare analyst.
-        Analyze the provided data (Basic Record, Research, Website Content) and photos.
+        You are a hyper-vigilant, data-driven parent who has visited 20 schools and is hard to impress.
+        Analyze the provided data (Basic Record, Research, Website Content) and photos to grade this daycare.
         
         Goal: Create the final, user-facing record for a premium daycare marketplace.
         
-        CRITICAL: 
+        CRITICAL SCORING RULES:
+        1. BASELINE IS 50 (AVERAGE): A score of 50 means "Licensed, Safe, Standard". It meets legal minimums.
+        2. EVIDENCE REQUIRED: No proof = No points. If 'cameras' or 'low ratios' aren't explicitly stated, assume they don't exist.
+        3. BE A SKEPTIC: Do not give benefit of doubt. Higher scores (60-80) require specific proof of quality (e.g. "organic meals", "bilingual", "master's degree teachers").
+        4. TOP TIERS ARE RARE: 80+ is "Verified" (Great). 95+ is "Top Rated" (Unicorn/Flawless).
+
+        Instructions:
         1. Be factual but warm. No AI slop. 
         2. Parents care about Safety, Love, and Learning.
         3. For 'marketing_content', follow the "Essential Trio" format strictly.
