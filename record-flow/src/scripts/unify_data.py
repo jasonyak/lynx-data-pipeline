@@ -47,7 +47,11 @@ class Standardizer:
             return "Other"
         
         t = type_raw.lower()
-        if any(x in t for x in ["center", "general residential", "child placing"]):
+        if "child placing" in t or "agency" in t or "placement" in t:
+            return "Agency"
+        if "residential" in t or "treatment" in t or "shelter" in t:
+            return "Residential"
+        if any(x in t for x in ["center"]):
             return "Center"
         if any(x in t for x in ["home", "family"]):
             return "Home"
@@ -59,6 +63,20 @@ class Standardizer:
     def _normalize_date(self, date_str: Optional[str]) -> Optional[str]:
         if not date_str:
             return None
+        # Attempt minimal parsing for known formats
+        # TX: YYYY-MM-DD...
+        # WA: M/D/YYYY
+        try:
+            if "T" in date_str:
+                return date_str.split("T")[0]
+            if "/" in date_str:
+                parts = date_str.split("/")
+                if len(parts) == 3:
+                     # M/D/YYYY -> YYYY-MM-DD
+                    return f"{parts[2]}-{parts[0].zfill(2)}-{parts[1].zfill(2)}"
+        except Exception:
+            pass
+        return date_str # Fallback to original if parsing fails provided it's string-ish
         # Attempt minimal parsing for known formats
         # TX: YYYY-MM-DD...
         # WA: M/D/YYYY
@@ -220,11 +238,16 @@ def main():
 
     
     seen_entries = set()
+
     drop_counts = {
         "missing_name": 0,
         "missing_address": 0,
         "inactive": 0,
-        "duplicate": 0
+        "duplicate": 0,
+        "filtered_type": 0,
+        "filtered_keyword": 0,
+        "filtered_capacity": 0,
+        "filtered_contact": 0
     }
     
     with open(output_path, "w") as outfile:
@@ -239,7 +262,6 @@ def main():
                 if args.limit:
                     if args.random:
                         print(f"  Randomly sampling {args.limit} records...")
-                        # Sample indices or items. random.sample throws if k > len
                         sample_size = min(args.limit, len(data))
                         data = random.sample(data, sample_size)
                     else:
@@ -251,6 +273,35 @@ def main():
                     try:
                         unified = source["handler"](item)
                         
+                        # 0. Heuristic Filters (Pre-check)
+                        
+                        # Filter A: Invalid Types
+                        if unified.get("type") in ["Agency", "Residential"]:
+                            drop_counts["filtered_type"] += 1
+                            continue
+                            
+                        # Filter B: Keywords (Name Only - safer than raw record)
+                        name = unified.get("name", "").lower()
+                        exclude_keywords = [
+                            "child placing", "residential treatment", 
+                            "placement agency", "adoption", "foster care"
+                        ]
+                        if any(k in name for k in exclude_keywords):
+                            drop_counts["filtered_keyword"] += 1
+                            continue
+                            
+                        # Filter C: Capacity (must be > 0 if present)
+                        cap = unified.get("capacity")
+                        if cap is not None and cap == 0:
+                            drop_counts["filtered_capacity"] += 1
+                            continue
+                            
+                        # Filter D: Contact Info (Must have at least ONE contact method)
+                        contact = unified.get("contact", {})
+                        if not any([contact.get("phone"), contact.get("email"), contact.get("website")]):
+                            drop_counts["filtered_contact"] += 1
+                            continue
+
                         # 1. Check Name
                         if unified.get("name") == "Unknown" or not unified.get("name"):
                             drop_counts["missing_name"] += 1
