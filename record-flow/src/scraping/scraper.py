@@ -185,7 +185,16 @@ class WebsiteScraper:
                     
                     # 1. Extract Text Content (for LLM)
                     # Get readable text (simple approach for now: innerText of body)
-                    page_text = await page.evaluate("document.body.innerText")
+                    # 1. Extract Text Content (for LLM)
+                    # Get readable text - prioritize semantic tags to reduce noise
+                    page_text = await page.evaluate('''() => {
+                        const tags = ['main', 'article', '#content', '.content', '#main', '.main'];
+                        for (const selector of tags) {
+                            const el = document.querySelector(selector);
+                            if (el && el.innerText.length > 200) return el.innerText;
+                        }
+                        return document.body.innerText;
+                    }''')
                     
                     # Save text content
                     text_filename = f"content_{hashlib.md5(current_url.encode()).hexdigest()}.txt"

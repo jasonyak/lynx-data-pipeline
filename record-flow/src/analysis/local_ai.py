@@ -173,17 +173,47 @@ class LocalRefiner:
         
         logger.debug(f"Identified {len(boilerplate_lines)} boilerplate lines (appearing in >{threshold} files).")
 
-        # 3. Construct unique body
+        # 3. Construct unique body with Aggressive Filtering
+        
+        # Heuristic Noise Filters
+        noise_patterns = [
+            r"copyright \d{4}", r"all rights reserved", r"privacy policy", r"terms of use", 
+            r"cookie policy", r"subscribe to our newsletter", r"follow us on", 
+            r"menu", r"navigation", r"skip to content", r"search this site",
+            r"sign in", r"log in", r"cart \(\d+\)"
+        ]
+        noise_regex = re.compile("|".join(noise_patterns), re.IGNORECASE)
+
         final_text = []
         for p in text_files:
             file_lines = all_lines_map.get(p, [])
             unique_lines = [l for l in file_lines if l not in boilerplate_lines]
-            if unique_lines:
+            
+            # Apply aggressive line filtering
+            filtered_lines = []
+            for line in unique_lines:
+                # 1. Skip if matches noise regex
+                if noise_regex.search(line):
+                    continue
+                # 2. Skip very short lines (likely nav items), unless they look like headers (ends with colon or all caps brief)
+                if len(line.split()) < 4: # Fewer than 4 words
+                     # Check if it might be a header?
+                     if not (line.endswith(':') or (line.isupper() and len(line) > 5)):
+                         continue
+                         
+                filtered_lines.append(line)
+                
+            if filtered_lines:
                 final_text.append(f"--- Source: {os.path.basename(p)} ---")
-                final_text.extend(unique_lines)
+                # Limit per-file contribution to avoid one file dominating? (Optional, let's stick to global limit for now)
+                final_text.extend(filtered_lines)
                 final_text.append("\n")
 
         full_content = "\n".join(final_text)
+        
+        # Enforce max length (15k chars) to prevent context overflow
+        if len(full_content) > 15000:
+            full_content = full_content[:15000] + "\n...[Truncated]..."
         
         # Save
         try:
