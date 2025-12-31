@@ -5,6 +5,7 @@ import time
 import argparse
 from enrichment.google_places import find_and_enrich
 from enrichment.gemini_search import enrich_with_gemini
+from enrichment.gemini_finalizer import enrich_with_gemini_finalizer
 from scraping.scraper import WebsiteScraper
 from analysis.local_ai import LocalRefiner
 
@@ -74,14 +75,12 @@ def process_record(record, cost_tracker, scraper=None, local_refiner=None):
             logger.debug(f"Skipping {record.get('id')}: No website available.")
             return None
 
-        # Enrich with Gemini (Insider Profile)
+        # Enrich with Gemini (Insider Profile - "Research Phase")
         # Only run if we haven't dropped it
-        record, usage_stats = enrich_with_gemini(record)
-
-        # Track usage
-        if usage_stats:
-            cost_tracker["gemini_enrichment"]["input"] += usage_stats.get("input_tokens", 0)
-            cost_tracker["gemini_enrichment"]["output"] += usage_stats.get("output_tokens", 0)
+        record, search_usage = enrich_with_gemini(record)
+        if search_usage:
+            cost_tracker["gemini_search"]["input"] += search_usage.get("input_tokens", 0)
+            cost_tracker["gemini_search"]["output"] += search_usage.get("output_tokens", 0)
 
         # Website Scraping (Deep)
         if scraper:
@@ -133,6 +132,14 @@ def process_record(record, cost_tracker, scraper=None, local_refiner=None):
                  except Exception as e:
                     logger.debug(f"Scraping failed for {target_url}: {e}. Dropping record.")
                     return None
+        
+        # [NEW] Final Synthesis (Gemini Finalizer)
+        # Takes all data (Google, Research, Scraped) and builds final record
+        logger.info(f"Finalizing record for {record.get('name')} with Gemini...")
+        record, final_usage = enrich_with_gemini_finalizer(record)
+        if final_usage:
+             cost_tracker["gemini_finalizer"]["input"] += final_usage.get("input_tokens", 0)
+             cost_tracker["gemini_finalizer"]["output"] += final_usage.get("output_tokens", 0)
             
     except Exception as e:
         # Don't fail the whole pipeline if enrichment crashes, just log it (or print here)
@@ -221,7 +228,8 @@ def main():
     
     # Hardcoded mapping to pricing keys for now
     step_pricing_map = {
-        "gemini_enrichment": "gemini"
+        "gemini_search": "gemini",
+        "gemini_finalizer": "gemini"
     }
     
     for step, tokens in cost_tracker.items():
