@@ -5,8 +5,7 @@ To run the unify data script:
 ```bash
 python src/scripts/unify_data.py --limit 10
 python src/scripts/unify_data.py --limit 5 --random
-python src/scripts/unify_data.py --state TX --city Austin
-
+python src/scripts/unify_data.py --state TX --city Austin --zip 78750
 ```
 
 To run the process flow script:

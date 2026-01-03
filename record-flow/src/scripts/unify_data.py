@@ -222,6 +222,7 @@ def main():
     parser.add_argument("--random", action="store_true", help="Randomly sample records if limit is set")
     parser.add_argument("--city", type=str, default=None, help="Filter by city name (case-insensitive)")
     parser.add_argument("--state", type=str, default=None, help="Filter by state code (e.g. TX, WA)")
+    parser.add_argument("--zip", type=str, default=None, help="Filter by zip code")
     args = parser.parse_args()
     
     standardizer = Standardizer()
@@ -246,9 +247,11 @@ def main():
         "filtered_type": 0,
         "filtered_keyword": 0,
         "filtered_capacity": 0,
+        "filtered_capacity": 0,
         "filtered_contact": 0,
         "filtered_city": 0,
-        "filtered_state": 0
+        "filtered_state": 0,
+        "filtered_zip": 0
     }
     
     with open(output_path, "w") as outfile:
@@ -336,6 +339,25 @@ def main():
                             # Also checked at source level, but double check record integrity
                             if record_state != target_state:
                                 drop_counts["filtered_state"] += 1
+                                continue
+
+                        if args.zip:
+                            # Zip codes can have extensions (e.g. 78750-7167), checking startswith is safer for general matching
+                            record_zip = address_obj.get("zip", "")
+                            if not record_zip:
+                                # If zip is missing but we asked to filter by it, usually we drop it.
+                                drop_counts["filtered_zip"] += 1
+                                continue
+                                
+                            # clean both to compare base zip
+                            # Assuming user provides 5 digit zip, checking if record starts with it
+                            target_zip = args.zip.strip()
+                            # Clean record zip to be safe or just string compare
+                            # If exact match is required, we should be careful about 5 vs 9 digits
+                            # Strategy: strict containment or startswith. 
+                            # Let's try startswith to allow "78750" to match "78750-1234"
+                            if not record_zip.startswith(target_zip):
+                                drop_counts["filtered_zip"] += 1
                                 continue
 
                         # 3. Check Status
