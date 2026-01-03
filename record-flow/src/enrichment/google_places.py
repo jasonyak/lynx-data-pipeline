@@ -188,7 +188,7 @@ def _get_place_details(place_id):
         result = data["result"]
         
         # Prepare Image Directory
-        image_dir = os.path.join("data", "images", place_id)
+        image_dir = os.path.join("data", "cache", "google_places", "images", place_id)
         if os.path.exists(image_dir):
             shutil.rmtree(image_dir)
         os.makedirs(image_dir, exist_ok=True)

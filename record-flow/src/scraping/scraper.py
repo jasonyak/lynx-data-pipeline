@@ -18,7 +18,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 class WebsiteScraper:
-    def __init__(self, output_base="data/scraped_content"):
+    def __init__(self, output_base="data/cache/scraped_content"):
         self.output_base = output_base
         self.max_depth = 3
         self.max_pages = 15 # Reduced from 50 to focus on high-quality pages

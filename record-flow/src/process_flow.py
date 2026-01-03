@@ -1,5 +1,10 @@
 import json
 import logging
+# Configure Logging immediately to avoid being overridden by imports
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s', force=True)
+logger = logging.getLogger(__name__)
+
+
 import os
 import time
 import argparse
@@ -16,9 +21,8 @@ INPUT_FILE = "data/unified_daycares.jsonl"
 OUTPUT_FILE = "data/output.jsonl"
 STATE_FILE = "data/processing_state.json"
 
-# Configure Logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
+# Logging configured at top of file
+
 
 # Suppress google_genai AFC info logs
 logging.getLogger("google_genai.models").setLevel(logging.WARNING)
@@ -62,6 +66,7 @@ def process_record(record, cost_tracker, scraper=None, local_refiner=None):
     Returns None if the record should be dropped.
     """
     try:
+        logger.debug(f"Starting processing for record: {record.get('name', 'Unknown')}")
         # Enrich with Google Places
         record = find_and_enrich(record)
         
@@ -215,6 +220,7 @@ def main():
                 if not line:
                     continue
                     
+                logger.debug(f"Processing record {i+1}...")
                 record = json.loads(line)
                 processed_result = process_record(record, cost_tracker, scraper=scraper, local_refiner=local_refiner)
                 
