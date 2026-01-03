@@ -235,7 +235,7 @@ def enrich_with_gemini_finalizer(record: Dict[str, Any]) -> Tuple[Dict[str, Any]
              final_data = json.loads(text)
              
              record["finalized_record"] = final_data
-             logger.info(f"Finalized record for {record.get('name')}")
+             logger.info(f"[{record.get('id')}] Finalized record for {record.get('name')}")
              
         except Exception as e:
             logger.error(f"Failed to parse final JSON (even with structured output): {e}")

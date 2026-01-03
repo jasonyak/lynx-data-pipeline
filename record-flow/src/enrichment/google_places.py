@@ -61,7 +61,7 @@ def find_and_enrich(record):
         try:
             with open(cache_path, "r") as f:
                 cached_data = json.load(f)
-            logger.debug(f"Cache HIT for {name}")
+            logger.debug(f"[{record.get('id')}] Cache HIT for {name}")
             record["google_data"] = cached_data
             return record
         except Exception as e:
@@ -70,7 +70,7 @@ def find_and_enrich(record):
     try:
         place_id = _search_place(full_query)
         if place_id:
-            logger.debug(f"Found Place ID {place_id} for {name}")
+            logger.debug(f"[{record.get('id')}] Found Place ID {place_id} for {name}")
             details = _get_place_details(place_id)
             if details:
                 record["google_data"] = details
@@ -81,7 +81,7 @@ def find_and_enrich(record):
                 except Exception as e:
                     logger.warning(f"Failed to write cache for {name}: {e}")
         else:
-            logger.debug(f"No Google Place found for {name}")
+            logger.debug(f"[{record.get('id')}] No Google Place found for {name}")
             not_found_data = {"status": "NOT_FOUND", "searched_query": full_query}
             record["google_data"] = not_found_data
             # Cache NOT_FOUND result too, to avoid re-searching
@@ -92,7 +92,7 @@ def find_and_enrich(record):
                 logger.warning(f"Failed to write cache for {name}: {e}")
             
     except Exception as e:
-        logger.error(f"Error enriching {name}: {e}")
+        logger.error(f"[{record.get('id')}] Error enriching {name}: {e}")
 
     return record
 

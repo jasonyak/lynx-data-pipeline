@@ -132,7 +132,7 @@ class WebsiteScraper:
             logger.warning(f"Failed to download {url}: {e}")
         return False
 
-    async def scrape_async(self, start_url):
+    async def scrape_async(self, start_url, record_id=None):
         start_time = time.time()
         domain = self._get_domain(start_url)
         # url_hash removed per user request to flatten structure
@@ -147,7 +147,7 @@ class WebsiteScraper:
         # Implementing basic skip if metadata exists to be efficient.
         manifest_path = os.path.join(base_dir, "metadata.json")
         if os.path.exists(manifest_path):
-             logger.info(f"Scraping already done for {start_url}. Skipping.")
+             logger.info(f"[{record_id}] Scraping already done for {start_url}. Skipping.")
              with open(manifest_path, 'r') as f:
                  return json.load(f)
 
@@ -171,7 +171,7 @@ class WebsiteScraper:
                     continue
                 visited_urls.add(current_url)
                 
-                logger.debug(f"Crawling {current_url} (Depth {depth})")
+                logger.debug(f"[{record_id}] Crawling {current_url} (Depth {depth})")
                 try:
                     # Relaxed wait condition to prevent timeouts on continuous network activity
                     await page.goto(current_url, wait_until="domcontentloaded", timeout=self.timeout_ms)
@@ -330,12 +330,12 @@ class WebsiteScraper:
         with open(manifest_path, 'w') as f:
             json.dump(result, f, indent=2)
             
-        logger.info(f"Scraping complete for {start_url}. Found {len(unique_assets)} assets.")
+        logger.info(f"[{record_id}] Scraping complete for {start_url}. Found {len(unique_assets)} assets.")
         return result
 
-    def scrape(self, url):
+    def scrape(self, url, record_id=None):
         """Synchronous wrapper for async scrape"""
-        return asyncio.run(self.scrape_async(url))
+        return asyncio.run(self.scrape_async(url, record_id))
 
 if __name__ == "__main__":
     import sys

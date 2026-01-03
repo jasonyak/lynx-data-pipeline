@@ -66,7 +66,8 @@ def process_record(record, cost_tracker, scraper=None, local_refiner=None):
     Returns None if the record should be dropped.
     """
     try:
-        logger.debug(f"Starting processing for record: {record.get('name', 'Unknown')}")
+        record_id = record.get('id', 'Unknown')
+        logger.info(f"Processing started for record ID: {record_id} - {record.get('name', 'Unknown')}")
         # Enrich with Google Places
         record = find_and_enrich(record)
         
@@ -81,7 +82,7 @@ def process_record(record, cost_tracker, scraper=None, local_refiner=None):
         # and the instruction implies this check comes after any google_places processing.
         business_status = google_data.get("business_status")
         if not business_status or business_status == "CLOSED_PERMANENTLY":
-            logger.info(f"Skipping {record.get('name')} - Invalid Status: {business_status}")
+            logger.info(f"[{record_id}] Skipping {record.get('name')} - Invalid Status: {business_status}")
             return None
         # ----------------------------------
 
@@ -90,7 +91,7 @@ def process_record(record, cost_tracker, scraper=None, local_refiner=None):
         google_website = google_data.get("contact", {}).get("website")
         
         if not state_website and not google_website:
-            logger.info(f"Skipping {record.get('name')} - No website available.")
+            logger.info(f"[{record_id}] Skipping {record.get('name')} - No website available.")
             return None
 
         # Enrich with Gemini (Insider Profile - "Research Phase")
@@ -106,12 +107,12 @@ def process_record(record, cost_tracker, scraper=None, local_refiner=None):
              target_url = google_website or state_website
              if target_url:
                  try:
-                     logger.debug(f"Scraping website: {target_url} ...")
-                     raw_scraped_data = scraper.scrape(target_url)
+                     logger.debug(f"[{record_id}] Scraping website: {target_url} ...")
+                     raw_scraped_data = scraper.scrape(target_url, record_id=record_id)
                      
                      # Local Refinement (Simulate 'intelligence')
                      if local_refiner and raw_scraped_data and raw_scraped_data.get("assets_found", 0) > 0:
-                         logger.debug(f"Refining scraped data for {target_url}...")
+                         logger.debug(f"[{record_id}] Refining scraped data for {target_url}...")
                          
                          # 1. Filter Images
                          all_images = [a['local_path'] for a in raw_scraped_data.get('assets', []) if a['type'] == 'image']
@@ -148,12 +149,12 @@ def process_record(record, cost_tracker, scraper=None, local_refiner=None):
                          record["scraped_data"] = raw_scraped_data
 
                  except Exception as e:
-                    logger.debug(f"Scraping failed for {target_url}: {e}. Dropping record.")
+                    logger.debug(f"[{record_id}] Scraping failed for {target_url}: {e}. Dropping record.")
                     return None
         
         # [NEW] Final Synthesis (Gemini Finalizer)
         # Takes all data (Google, Research, Scraped) and builds final record
-        logger.info(f"Finalizing record for {record.get('name')} with Gemini...")
+        logger.info(f"[{record_id}] Finalizing record for {record.get('name')} with Gemini...")
         record, final_usage = enrich_with_gemini_finalizer(record)
         if final_usage:
              cost_tracker["gemini_finalizer"]["input"] += final_usage.get("input_tokens", 0)
