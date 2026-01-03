@@ -220,6 +220,8 @@ def main():
     parser = argparse.ArgumentParser(description="Unify state daycare data to JSONL")
     parser.add_argument("--limit", type=int, default=None, help="Limit number of records per state for testing")
     parser.add_argument("--random", action="store_true", help="Randomly sample records if limit is set")
+    parser.add_argument("--city", type=str, default=None, help="Filter by city name (case-insensitive)")
+    parser.add_argument("--state", type=str, default=None, help="Filter by state code (e.g. TX, WA)")
     args = parser.parse_args()
     
     standardizer = Standardizer()
@@ -230,12 +232,9 @@ def main():
     # Inputs assumed to be at project root / data (relative to execution from record-flow dir which is 2 levels deep from lynx root)
     # /Users/jason/workspace1/lynx/data -> ../../data
     sources = [
-        {"path": "../../data/texas.json", "handler": standardizer.standardize_tx, "name": "Texas"},
-        {"path": "../../data/washington.json", "handler": standardizer.standardize_wa, "name": "Washington"}
+        {"path": "../../data/texas.json", "handler": standardizer.standardize_tx, "name": "Texas", "code": "TX"},
+        {"path": "../../data/washington.json", "handler": standardizer.standardize_wa, "name": "Washington", "code": "WA"}
     ]
-    
-
-
     
     seen_entries = set()
 
@@ -247,11 +246,18 @@ def main():
         "filtered_type": 0,
         "filtered_keyword": 0,
         "filtered_capacity": 0,
-        "filtered_contact": 0
+        "filtered_contact": 0,
+        "filtered_city": 0,
+        "filtered_state": 0
     }
     
     with open(output_path, "w") as outfile:
         for source in sources:
+            # Pre-filter source if state flag is set
+            if args.state and args.state.upper() != source["code"]:
+                print(f"Skipping {source['name']} (State filter: {args.state})")
+                continue
+
             print(f"Processing {source['name']}...")
             try:
                 with open(source["path"], "r") as f:
@@ -308,11 +314,30 @@ def main():
                             continue
 
                         # 2. Check Address
-                        full_address = unified.get("address", {}).get("full", "")
+                        address_obj = unified.get("address", {})
+                        full_address = address_obj.get("full", "")
                         if not full_address:
                             drop_counts["missing_address"] += 1
                             continue
                             
+                        # Filter: City and State
+                        if args.city:
+                            record_city = address_obj.get("city", "").lower().strip()
+                            target_city = args.city.lower().strip()
+                            if record_city != target_city:
+                                drop_counts["filtered_city"] += 1
+                                continue
+                        
+                        if args.state:
+                            record_state = address_obj.get("state", "").upper().strip()
+                            target_state = args.state.upper().strip()
+                            # Standardize state codes just in case (e.g. "Texas" vs "TX")
+                            # But assuming our scrapers are good, comparing normalized upper is likely enough for now.
+                            # Also checked at source level, but double check record integrity
+                            if record_state != target_state:
+                                drop_counts["filtered_state"] += 1
+                                continue
+
                         # 3. Check Status
                         if unified.get("status") != "Active":
                             drop_counts["inactive"] += 1
