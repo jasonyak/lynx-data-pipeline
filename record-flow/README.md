@@ -66,6 +66,8 @@ $$$$: >$2800/mo
 * end_hour_of_operation
 * availability
 * availability_explaination (new)
+* price_start
+* price_end
 * certifications 
 * is_internal
 
@@ -73,6 +75,7 @@ $$$$: >$2800/mo
 * headline
 * sub_headline
 * description
+* search_tags JSONB (Array of strings with GIN Indexed array)
 
 * google_maps_url
 * website_url
@@ -88,8 +91,14 @@ $$$$: >$2800/mo
 * longitude
 * location
 
+### daycare_enrichments
 
-
+* id
+* daycare_id
+* source (gemini_search)
+* type (safet, reputation, or staff_insights)
+* summary
+* sources JSONB (Array of objects with text, url, name)
 
 ### daycare_assets
 
@@ -101,7 +110,15 @@ $$$$: >$2800/mo
 * width
 * height
 
+
 ### daycare_reviews
 
-### daycare_enrichments
+* id
+* daycare_id
+* source (google, direct)
+* author_name
+* rating
+* text
+* published_time
+
 

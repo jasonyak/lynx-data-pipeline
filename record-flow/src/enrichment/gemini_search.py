@@ -19,61 +19,65 @@ else:
     logger.warning("GEMINI_API_KEY not found. Gemini enrichment will be skipped.")
     client = None
 
-# Define the "Insider Profile" Schema using strict JSON typing for the prompt
-# Note: With new SDK, we might potentially use response_schema in future, 
-# but for now text extraction with prompt instructions is robust enough for this use case.
+# Define the "Background Check" Schema for parent-focused daycare research
 SCHEMA_INSTRUCTION = """
-Return a standard JSON object. The schema must strictly follow this structure:
+Return a valid JSON object. The schema must strictly follow this structure:
 
 {
-  "educational_profile": {
-    "philosophy": "string or null (e.g. Montessori, Reggio, Play-based)",
-    "programs": {
-      "languages": ["string"],
-      "summer_camp": "boolean or null",
-      "part_time": "boolean or null"
-    }
+  "safety": {
+    "summary": "string (2-4 sentences summarizing any safety concerns, violations, legal issues, or news. If nothing found, say 'No safety concerns found.')",
+    "sources": [
+      {
+        "text": "string (exact quote or key finding)",
+        "url": "string",
+        "source_name": "string (e.g. 'Austin American-Statesman', 'BBB', 'Texas HHS')"
+      }
+    ]
   },
-  "operational_reality": {
-    "waitlist_status": "string or null (e.g. 'Long waitlist', 'Now enrolling')",
-    "pricing": {
-      "mention": "string or null (e.g. '$300/week')",
-      "source": "string or null (e.g. 'Yelp review 2023')"
-    },
-    "schedule": "string or null (e.g. 'Follows ISD calendar')"
+  "reputation": {
+    "summary": "string (2-4 sentences summarizing overall reputation from reviews. Include sentiment and common themes.)",
+    "sources": [
+      {
+        "text": "string (exact quote from review)",
+        "url": "string",
+        "source_name": "string (e.g. 'Google Reviews', 'Yelp', 'Facebook', 'Reddit')"
+      }
+    ]
   },
-  "amenities": {
-    "meals": "string or null (e.g. 'Organic provided', 'Packed lunch required')",
-    "security": {
-        "cameras_streaming": "boolean or null",
-        "secure_entry": "boolean or null"
-    },
-    "facilities": ["string (e.g. 'Splash pad', 'Indoor gym')"]
+  "staff_insights": {
+    "summary": "string or null (2-4 sentences about employee experiences, turnover, management. Null if no employee reviews found.)",
+    "sources": [
+      {
+        "text": "string (exact quote from employee review)",
+        "url": "string",
+        "source_name": "string (name of the website where review was found)"
+      }
+    ]
   },
-  "community_intelligence": {
-    "reputation": "string or null (e.g. 'Hidden gem', 'Avoid', 'New/Unknown')",
-    "staff_sentiment": "string or null (e.g. 'High turnover mentioned in multiple reviews')",
-    "red_flags": ["string (e.g. '2021 lawsuit regarding safety')"],
-    "parent_gotchas": ["string (e.g. 'Strict late pickup fees', 'Parking nightmare')"]
-  },
-  "verification": {
-      "source_urls": ["string (url)"],
-      "key_quotes": [
-          {
-              "quote": "string (exact text from source)",
-              "url": "string (source url)",
-              "context": "string (what this quote supports, e.g. 'waitlist')"
-          }
-      ]
+  "operational_info": {
+    "years_in_operation": "string or null",
+    "philosophy": "string or null (e.g. Montessori, Play-based, Reggio)",
+    "languages": ["string"],
+    "ages_served": "string or null",
+    "pricing_mentions": "string or null",
+    "waitlist_info": "string or null",
+    "hours": "string or null",
+    "meals": "string or null",
+    "facilities": ["string"]
   }
 }
 
-Use null if information is not found. Do not approximate or guess.
+CRITICAL RULES:
+- Use null for unknown fields. Use empty arrays [] if no sources found.
+- Only include information you can verify with a source URL.
+- Do NOT make inferences or assumptions - report only what is explicitly stated in sources.
+- Summaries must be based on direct evidence from sources, not your interpretation.
 """
 
 def enrich_with_gemini(record):
     """
-    Uses Gemini with Google Search to find qualitative "Insider Profile" data.
+    Uses Gemini with Google Search to conduct a background check on a daycare.
+    Prioritizes safety signals, reputation, and staff insights over operational details.
     """
     if not client:
         return record, {"input_tokens": 0, "output_tokens": 0}
@@ -93,16 +97,30 @@ def enrich_with_gemini(record):
                  address = str(contact)
         
         prompt = f"""
-        Research the daycare '{name}' located at '{address}'. 
-        Search for official websites, parent forums (Reddit, local groups), employee reviews (Glassdoor, Indeed), and news articles.
-        
-        Your goal is to build an "Insider Profile" containing qualitative data that official records miss.
-        Focus on:
-        1. **Educational Philosophy**: Is it Montessori, Play-based, etc.?
-        2. **Operational Reality**: Waitlists, Pricing, Schedule.
-        3. **Amenities**: Cameras, Meals, Facilities.
-        4. **Community Intelligence**: Unfiltered reputation, staff turnover issues, lawsuits/scandals ("Red Flags"), and logistical complaints ("Gotchas").
-        5. **Verification**: Find exact quotes and source URLs to support your findings.
+        You are conducting a background check on a daycare for parents researching childcare options.
+
+        Research '{name}' located at '{address}'.
+
+        Search for:
+        - News articles (any incidents, closures, awards, or mentions)
+        - State licensing/inspection records or violations
+        - BBB complaints
+        - Google, Yelp, and Facebook reviews
+        - Reddit and parent forum discussions
+        - Employee reviews from any source
+
+        PRIORITIES (in order of importance):
+        1. SAFETY: Any news about incidents, violations, complaints, or legal issues
+        2. REPUTATION: What are parents and employees actually saying? Include exact quotes.
+        3. OPERATIONAL: Basic info like pricing, hours, philosophy (only if found)
+
+        IMPORTANT - Only report verifiable facts:
+        - Use direct quotes wherever possible
+        - Include the source URL for every claim
+        - Do NOT infer, speculate, or generalize
+        - Do NOT make assumptions about things not explicitly stated
+        - If information is unclear or ambiguous, omit it
+        - If you find nothing concerning, report empty arrays for those fields
 
         {SCHEMA_INSTRUCTION}
         """
