@@ -94,10 +94,7 @@ def _build_finalized_record(gemini_response: Dict[str, Any], record: Dict[str, A
 
         # Scoring (from Gemini ranking)
         "trust_score": gemini_response.get("ranking", {}).get("trust_score"),
-        "safety_and_ratio": gemini_response.get("ranking", {}).get("score_breakdown", {}).get("safety_and_ratio"),
-        "teacher_quality": gemini_response.get("ranking", {}).get("score_breakdown", {}).get("teacher_quality"),
-        "learning_and_growth": gemini_response.get("ranking", {}).get("score_breakdown", {}).get("learning_and_growth"),
-        "cleanliness_facilities": gemini_response.get("ranking", {}).get("score_breakdown", {}).get("cleanliness_facilities"),
+        "score_breakdown": gemini_response.get("ranking", {}).get("score_breakdown"),
 
         # Google reviews
         "review_score": google_data.get("rating", {}).get("stars"),

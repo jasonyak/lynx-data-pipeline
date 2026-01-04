@@ -33,92 +33,127 @@ curl -G "https://data.texas.gov/resource/bc5r-88dy.json" \
   --data-urlencode '$limit=50000'
 ```
 
-### Price Range
-
-$: <$1000/mo
-$$: $1000-$1800/mo
-$$$: $1800-$2800/mo
-$$$$: >$2800/mo
-
 ## V0 Supabase Tables
 
-### daycares
+### 1. daycares
+Main daycare records with all enriched data ready for database insert
 
+**Identity & Scoring**
 
-* daycare_id
-* name
+| Field | Type | Description |
+|-------|------|-------------|
+| daycare_id | TEXT PRIMARY KEY | Unique identifier from source state data |
+| name | TEXT NOT NULL | Daycare name |
+| trust_score | INTEGER | Overall trust score (0-100) from Gemini |
+| score_breakdown | JSONB | Score components: {safety_and_ratio, teacher_quality, learning_and_growth, cleanliness_facilities} |
+| review_score | NUMERIC(2,1) | Google Places rating (1-5 scale) |
+| review_count | INTEGER | Number of Google reviews |
 
-* trust_score
-* safety_and_ratio
-* teacher_quality
-* learning_and_growth
-* cleanliness_facilities
+**Program Details**
 
-* review_score
+| Field | Type | Description |
+|-------|------|-------------|
+| min_age_months | INTEGER | Minimum age in months |
+| max_age_months | INTEGER | Maximum age in months |
+| program_type | TEXT | Program type: 'Montessori', 'Reggio', 'Waldorf', 'Other' |
+| meals_provided | BOOLEAN | Whether meals are provided |
+| snacks_provided | BOOLEAN | Whether snacks are provided |
+| teacher_student_ratio | TEXT | Teacher to student ratio (e.g., '1:4') |
+| cameras | BOOLEAN | Whether cameras are available for parents |
+| secure_entry | BOOLEAN | Whether secure entry/access control exists |
+| availability_status | TEXT | Status: 'Waitlist', 'Open Enrollment', 'Call to Confirm' |
+| price_start | INTEGER | Estimated monthly tuition start price (USD) |
+| price_end | INTEGER | Estimated monthly tuition end price (USD) |
+| certifications | TEXT[] | Array of certifications (e.g., 'NAEYC', 'Texas Rising Star') |
+| capacity | INTEGER | Maximum number of children |
+| operating_hours | JSONB | Google Places hours structure with weekday_text array |
+| is_internal | BOOLEAN DEFAULT FALSE | Whether this is an internal/managed daycare |
 
-* min_age_months
-* max_age_months
-* program_type
-* meals_provided
-* snacks_provided
-* teacher_student_ratio
-* cameras
-* secure_entry
-* availability_status
-* price_start
-* price_end
-* certifications 
-* is_internal
+**Marketing Content**
 
-* thumbnail_url
-* headline
-* sub_headline
-* description
-* search_tags JSONB (Array of strings with GIN Indexed array)
+| Field | Type | Description |
+|-------|------|-------------|
+| thumbnail_url | TEXT | Primary image URL/path |
+| headline | TEXT NOT NULL | Marketing headline (4-7 words) |
+| sub_headline | TEXT NOT NULL | Marketing subheadline (1 sentence) |
+| description | TEXT NOT NULL | Full description (max 600 chars, 2 paragraphs) |
+| search_tags | JSONB | Array of standardized search tags (0-5 tags), GIN indexed |
 
-* google_maps_url
-* website_url
+**Insights**
 
-* email
-* director
-* phone
-* address
-* city
-* state
-* zip
-* country
-* latitude
-* longitude
-* location
+| Field | Type | Description |
+|-------|------|-------------|
+| insights | JSONB | Object with: sentiment_summary, atmosphere, red_flags[], parent_tips[] |
 
-### daycare_enrichments
+**Links & Contact**
 
-* id
-* daycare_id
-* source (gemini_search)
-* type (safet, reputation, or staff_insights)
-* summary
-* sources JSONB (Array of objects with text, url, name)
+| Field | Type | Description |
+|-------|------|-------------|
+| google_maps_url | TEXT | Google Maps URL |
+| google_place_id | TEXT | Google Places API ID for lookups |
+| website_url | TEXT | Daycare website URL |
+| email | TEXT | Contact email |
+| director_name | TEXT | Director/owner name |
+| phone | TEXT | Contact phone number |
 
-### daycare_assets
+**Location**
 
-* id
-* daycare_id
-* url
-* type (image, pdf, text)
-* source (google_photo, google_street_view, website, daycare_uploaded)
-* width
-* height
+| Field | Type | Description |
+|-------|------|-------------|
+| address | TEXT | Full street address |
+| city | TEXT | City name |
+| state | TEXT | 2-letter state code |
+| zip | TEXT | ZIP/postal code |
+| country | TEXT DEFAULT 'US' | Country code |
+| latitude | NUMERIC(10,7) | Latitude coordinate |
+| longitude | NUMERIC(10,7) | Longitude coordinate |
+| location | GEOGRAPHY(POINT, 4326) | PostGIS point (computed from lat/lng) |
 
+**Note:** Most fields are nullable as they come from LLM generation and may not always be found in source data.
 
-### daycare_reviews
+---
 
-* id
-* daycare_id
-* source (google, direct)
-* author_name
-* rating
-* text
-* published_time
+### 2. daycare_enrichments
+Research insights from Gemini search phase
+
+| Field | Type | Description |
+|-------|------|-------------|
+| id | UUID PRIMARY KEY DEFAULT gen_random_uuid() | Unique enrichment ID |
+| daycare_id | TEXT NOT NULL REFERENCES daycares(daycare_id) | Foreign key to daycares |
+| source | TEXT NOT NULL | Source of enrichment (e.g., 'gemini_search') |
+| type | TEXT NOT NULL | Type: 'safety', 'reputation', 'staff_insights', 'operational_info' |
+| summary | TEXT | Summary text of findings |
+| sources | JSONB | Array of objects with {text, url, source_name} |
+| created_at | TIMESTAMPTZ DEFAULT NOW() | When enrichment was created |
+
+---
+
+### 3. daycare_assets
+Media files (images, PDFs, documents)
+
+| Field | Type | Description |
+|-------|------|-------------|
+| id | UUID PRIMARY KEY DEFAULT gen_random_uuid() | Unique asset ID |
+| daycare_id | TEXT NOT NULL REFERENCES daycares(daycare_id) | Foreign key to daycares |
+| url | TEXT NOT NULL | File URL or path |
+| type | TEXT NOT NULL | Asset type: 'image', 'pdf', 'text' |
+| source | TEXT NOT NULL | Source: 'google_photo', 'google_street_view', 'website', 'daycare_uploaded' |
+| created_at | TIMESTAMPTZ DEFAULT NOW() | When asset was added |
+
+---
+
+### 4. daycare_reviews
+Parent reviews from Google and direct submissions
+
+| Field | Type | Description |
+|-------|------|-------------|
+| id | UUID PRIMARY KEY DEFAULT gen_random_uuid() | Unique review ID |
+| daycare_id | TEXT NOT NULL REFERENCES daycares(daycare_id) | Foreign key to daycares |
+| source | TEXT NOT NULL | Source: 'google', 'direct' |
+| author_name | TEXT | Reviewer name |
+| rating | INTEGER CHECK (rating >= 1 AND rating <= 5) | Star rating 1-5 |
+| text | TEXT | Review content |
+| published_time | TIMESTAMPTZ | When review was published |
+| created_at | TIMESTAMPTZ DEFAULT NOW() | When record was created |
 
 
