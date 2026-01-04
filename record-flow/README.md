@@ -1,37 +1,69 @@
-## Commands
-
-To run the unify data script:
+## Setup
 
 ```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+```
+
+## Commands
+
+### Data Pipeline
+
+#### 1. Fetch Raw Data
+```bash
+curl -G "https://data.wa.gov/resource/was8-3ni8.json" --data-urlencode '$limit=50000'
+curl -G "https://data.texas.gov/resource/bc5r-88dy.json" --data-urlencode '$limit=50000'
+```
+
+#### 2. Unify Data
+```bash
+# Basic run
+python src/scripts/unify_data.py
+
+# Limit results (useful for testing)
 python src/scripts/unify_data.py --limit 10
-python src/scripts/unify_data.py --limit 5 --random
+
+# Limit + Random sample
+python src/scripts/unify_data.py --limit 10 --random
+
+# Filter by location (State, City, Zip)
 python src/scripts/unify_data.py --state TX --city Austin --zip 78758
 ```
 
-To run the process flow script:
-
+#### 3. Process Flow (Enrichment)
 ```bash
-python src/process_flow.py --resume
+# Run all steps
 python src/process_flow.py
+
+# Resume from last state (if crashed/stopped)
+python src/process_flow.py --resume
+
+# Run with specific worker count (default: 4)
 python src/process_flow.py --workers 8
+
+# Resume + Workers
+python src/process_flow.py --resume --workers 10
 ```
 
-To run the scraper script:
-
+#### 4. Populate Supabase
 ```bash
+# Run all
+python src/scripts/populate_supabase.py
+
+# Test run (limit records)
+python src/scripts/populate_supabase.py --limit 1
+
+# Dry run (no DB changes)
+python src/scripts/populate_supabase.py --dry-run
+```
+
+### Utilities
+```bash
+# Scraper Test
 python src/scraping/scraper.py --url https://example.com
 ```
 
-To get raw data
-
-```bash
-curl -G "https://data.wa.gov/resource/was8-3ni8.json" \
-  --data-urlencode '$limit=50000'
-
-
-curl -G "https://data.texas.gov/resource/bc5r-88dy.json" \
-  --data-urlencode '$limit=50000'
-```
 
 ## V0 Supabase Tables
 
@@ -68,6 +100,7 @@ Main daycare records with all enriched data ready for database insert
 | capacity | INTEGER | Maximum number of children |
 | operating_hours | JSONB | Google Places hours structure with weekday_text array |
 | is_internal | BOOLEAN DEFAULT FALSE | Whether this is an internal/managed daycare |
+| is_claimed | BOOLEAN DEFAULT FALSE | Whether the daycare has been claimed by an owner |
 
 **Marketing Content**
 
