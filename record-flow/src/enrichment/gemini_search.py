@@ -1,11 +1,16 @@
 import os
 import json
 import logging
+import time
 from google import genai
 from google.genai import types
 from config import GEMINI_MODEL_ID
 
 logger = logging.getLogger(__name__)
+
+# Retry configuration
+MAX_RETRIES = 3
+RETRY_BASE_DELAY = 1.0  # seconds
 
 # Configure Gemini API
 API_KEY = os.environ.get("GEMINI_API_KEY")
@@ -125,14 +130,27 @@ def enrich_with_gemini(record):
         {SCHEMA_INSTRUCTION}
         """
 
-        # Generate content with Google Search Tool
-        response = client.models.generate_content(
-            model=GEMINI_MODEL_ID,
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                tools=[types.Tool(google_search=types.GoogleSearch())]
-            )
-        )
+        # Generate content with Google Search Tool (with retry)
+        response = None
+        last_error = None
+        for attempt in range(MAX_RETRIES):
+            try:
+                response = client.models.generate_content(
+                    model=GEMINI_MODEL_ID,
+                    contents=prompt,
+                    config=types.GenerateContentConfig(
+                        tools=[types.Tool(google_search=types.GoogleSearch())]
+                    )
+                )
+                break  # Success, exit retry loop
+            except Exception as e:
+                last_error = e
+                if attempt < MAX_RETRIES - 1:
+                    delay = RETRY_BASE_DELAY * (2 ** attempt)  # Exponential backoff
+                    logger.warning(f"[{record.get('id')}] Gemini search attempt {attempt + 1} failed: {e}. Retrying in {delay}s...")
+                    time.sleep(delay)
+                else:
+                    raise last_error  # Re-raise on final attempt
         
         # Extract Token Usage
         if response.usage_metadata:

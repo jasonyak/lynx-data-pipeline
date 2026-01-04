@@ -24,10 +24,12 @@ logging.getLogger("google_genai.models").setLevel(logging.WARNING)
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
 # Local imports
-from config import INPUT_FILE, OUTPUT_FILE
+import copy
+from config import INPUT_FILE, OUTPUT_FILE, RETRY_FILE
 from utils import (
     ThreadSafeCostTracker,
     ThreadSafeOutputWriter,
+    ThreadSafeRetryWriter,
     ProgressReporter,
     ThreadSafeRefiner,
     get_thread_scraper,
@@ -44,6 +46,7 @@ def process_record(
     record: dict,
     cost_tracker: ThreadSafeCostTracker,
     refiner: ThreadSafeRefiner,
+    retry_writer: ThreadSafeRetryWriter,
 ) -> Optional[dict]:
     """
     Process a single record through all enrichment stages.
@@ -51,6 +54,9 @@ def process_record(
     """
     record_id = record.get('id', 'Unknown')
     logger.info(f"Processing: {record_id} - {record.get('name', 'Unknown')}")
+
+    # Save original record for retry file if needed
+    original_record = copy.deepcopy(record)
 
     try:
         # Step 1: Google Places enrichment
@@ -82,6 +88,13 @@ def process_record(
                 search_usage.get("input_tokens", 0),
                 search_usage.get("output_tokens", 0))
 
+        # Check for gemini_search failure
+        gemini_search_data = record.get("gemini_search_data", {})
+        if gemini_search_data.get("status") == "ERROR":
+            error_msg = gemini_search_data.get("error", "Unknown error")
+            retry_writer.write(original_record, "gemini_search", error_msg)
+            logger.warning(f"[{record_id}] Written to retry file (gemini_search failed)")
+
         # Step 3: Website scraping
         target_url = google_website or state_website
         scraper = get_thread_scraper()
@@ -100,6 +113,14 @@ def process_record(
             cost_tracker.add("gemini_finalizer",
                 final_usage.get("input_tokens", 0),
                 final_usage.get("output_tokens", 0))
+
+        # Check for finalizer failure
+        finalized = record.get("finalized_record", {})
+        if finalized.get("error") or finalized.get("error_crash"):
+            error_msg = finalized.get("error") or finalized.get("error_crash", "Unknown error")
+            retry_writer.write(original_record, "gemini_finalizer", error_msg)
+            logger.warning(f"[{record_id}] Written to retry file (gemini_finalizer failed)")
+            return None  # Don't output records with failed finalization
 
         return record
 
@@ -163,12 +184,14 @@ def main():
         start_index = 0
         print("Starting fresh...")
         open(OUTPUT_FILE, 'w').close()
+        open(RETRY_FILE, 'w').close()  # Clear retry file on fresh start
 
     if not os.path.exists(INPUT_FILE):
         print(f"Error: Input file {INPUT_FILE} not found.")
         return
 
     output_writer = ThreadSafeOutputWriter(OUTPUT_FILE)
+    retry_writer = ThreadSafeRetryWriter(RETRY_FILE)
 
     # Load records
     records_to_process = []
@@ -204,7 +227,7 @@ def main():
         nonlocal max_index_completed
         index, record = index_record
         try:
-            result = process_record(record, cost_tracker, refiner)
+            result = process_record(record, cost_tracker, refiner, retry_writer)
             if result:
                 output_writer.write(result)
             with index_lock:
@@ -222,9 +245,13 @@ def main():
     progress.stop()
     save_state(max_index_completed)
     output_writer.close()
+    retry_writer.close()
 
     elapsed = time.time() - start_time
+    retry_count = retry_writer.get_written_count()
     print(f"\nComplete. Wrote {output_writer.get_written_count()} records in {elapsed:.2f}s")
+    if retry_count > 0:
+        print(f"Failed records written to {RETRY_FILE}: {retry_count}")
     print_cost_summary(cost_tracker.get_snapshot())
 
 

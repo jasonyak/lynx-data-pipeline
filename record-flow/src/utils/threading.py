@@ -46,6 +46,33 @@ class ThreadSafeOutputWriter:
         self._file.close()
 
 
+class ThreadSafeRetryWriter:
+    """Thread-safe file writer for records that failed processing."""
+    def __init__(self, retry_path: str):
+        self._lock = threading.Lock()
+        self._file = open(retry_path, 'a')
+        self._written_count = 0
+
+    def write(self, record: dict, failed_step: str, error: str):
+        with self._lock:
+            entry = {
+                "original_record": record,
+                "failed_step": failed_step,
+                "error": error,
+                "timestamp": time.strftime("%Y-%m-%d %H:%M:%S")
+            }
+            self._file.write(json.dumps(entry) + "\n")
+            self._file.flush()
+            self._written_count += 1
+
+    def get_written_count(self) -> int:
+        with self._lock:
+            return self._written_count
+
+    def close(self):
+        self._file.close()
+
+
 class ProgressReporter:
     """Background thread that prints progress every 5 seconds."""
     def __init__(self, total: int, cost_tracker: ThreadSafeCostTracker):

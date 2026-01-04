@@ -77,6 +77,11 @@ def process_record(supabase: Client, line: str, dry_run: bool = False):
     if not finalized:
         print("Skipping record without finalized_record")
         return
+
+    # Check for crash error
+    if finalized.get("error_crash"):
+        print(f"Skipping crashed record: {finalized.get('name', 'Unknown')}")
+        return
         
     daycare_id = finalized.get("daycare_id")
     if not daycare_id:

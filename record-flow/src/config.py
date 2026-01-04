@@ -7,6 +7,7 @@ GEMINI_MODEL_ID = "gemini-3-flash-preview"
 INPUT_FILE = "data/unified_daycares.jsonl"
 OUTPUT_FILE = "data/output.jsonl"
 STATE_FILE = "data/processing_state.json"
+RETRY_FILE = "data/retry.jsonl"
 
 # Pricing (USD per 1M tokens)
 PRICING = {

@@ -2,11 +2,16 @@ import os
 import io
 import json
 import logging
+import time
 from typing import List, Dict, Any, Tuple, Optional, Literal
 from config import GEMINI_MODEL_ID
 from google import genai
 from google.genai import types
 from pydantic import BaseModel, Field
+
+# Retry configuration
+MAX_RETRIES = 3
+RETRY_BASE_DELAY = 1.0  # seconds
 
 # Try importing PIL for image resizing
 try:
@@ -302,32 +307,46 @@ Return the EXACT original path from the input image list.
         for img_obj in inline_images:
             final_contents.append(types.Part.from_bytes(data=img_obj["data"], mime_type="image/jpeg"))
 
-        response = client.models.generate_content(
-            model=GEMINI_MODEL_ID,
-            contents=final_contents,
-            config=types.GenerateContentConfig(
-                response_mime_type="application/json",
-                response_schema=DaycareRecord,
-                safety_settings=[
-                    types.SafetySetting(
-                        category="HARM_CATEGORY_DANGEROUS_CONTENT",
-                        threshold="BLOCK_NONE"
-                    ),
-                    types.SafetySetting(
-                        category="HARM_CATEGORY_HATE_SPEECH",
-                        threshold="BLOCK_NONE"
-                    ),
-                    types.SafetySetting(
-                        category="HARM_CATEGORY_HARASSMENT",
-                        threshold="BLOCK_NONE"
-                    ),
-                    types.SafetySetting(
-                        category="HARM_CATEGORY_SEXUALLY_EXPLICIT",
-                        threshold="BLOCK_NONE"
-                    ),
-                ]
-            )
-        )
+        # Call Gemini with retry logic
+        response = None
+        last_error = None
+        for attempt in range(MAX_RETRIES):
+            try:
+                response = client.models.generate_content(
+                    model=GEMINI_MODEL_ID,
+                    contents=final_contents,
+                    config=types.GenerateContentConfig(
+                        response_mime_type="application/json",
+                        response_schema=DaycareRecord,
+                        safety_settings=[
+                            types.SafetySetting(
+                                category="HARM_CATEGORY_DANGEROUS_CONTENT",
+                                threshold="BLOCK_NONE"
+                            ),
+                            types.SafetySetting(
+                                category="HARM_CATEGORY_HATE_SPEECH",
+                                threshold="BLOCK_NONE"
+                            ),
+                            types.SafetySetting(
+                                category="HARM_CATEGORY_HARASSMENT",
+                                threshold="BLOCK_NONE"
+                            ),
+                            types.SafetySetting(
+                                category="HARM_CATEGORY_SEXUALLY_EXPLICIT",
+                                threshold="BLOCK_NONE"
+                            ),
+                        ]
+                    )
+                )
+                break  # Success, exit retry loop
+            except Exception as e:
+                last_error = e
+                if attempt < MAX_RETRIES - 1:
+                    delay = RETRY_BASE_DELAY * (2 ** attempt)  # Exponential backoff
+                    logger.warning(f"[{record.get('id')}] Finalizer attempt {attempt + 1} failed: {e}. Retrying in {delay}s...")
+                    time.sleep(delay)
+                else:
+                    raise last_error  # Re-raise on final attempt
         
         # 5. Parse Response
         if response.usage_metadata:
