@@ -171,7 +171,8 @@ def _get_place_details(place_id):
         "geometry", # for lat/lng
         "opening_hours",
         "photo",
-        "reviews"
+        "reviews",
+        "url"
     ]
     
     params = {
@@ -198,6 +199,7 @@ def _get_place_details(place_id):
             "place_id": result.get("place_id"),
             "name": result.get("name"),
             "business_status": result.get("business_status"), # Added field
+            "google_maps_url": result.get("url"),
             "address": result.get("formatted_address"),
             "contact": {
                 "phone": result.get("formatted_phone_number"),

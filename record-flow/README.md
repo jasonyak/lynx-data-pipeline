@@ -40,15 +40,19 @@ $$: $1000-$1800/mo
 $$$: $1800-$2800/mo
 $$$$: >$2800/mo
 
-## Supabase Tables
+## V0 Supabase Tables
 
 ### daycares
 
-These are first class fields
 
-* id
+* daycare_id
 * name
-* ranking (and constituents)
+* trust_score
+* safety_and_ratio
+* teacher_quality
+* learning_and_growth
+* cleanliness_facilities
+* trust_score_explaination (new)
 * review_score
 * age_start_months
 * age_end_months
@@ -60,11 +64,44 @@ These are first class fields
 * secure_entry
 * start_hour_of_operation
 * end_hour_of_operation
-* available
+* availability
+* availability_explaination (new)
+* certifications 
+* is_internal
 
 * thumbnail_url
 * headline
 * sub_headline
 * description
 
+* google_maps_url
+* website_url
+* email
+* director
+* phone
+* address
+* city
+* state
+* zip
+* country
+* latitude
+* longitude
+* location
+
+
+
+
+### daycare_assets
+
+* id
+* daycare_id
+* url
+* type (image, pdf, text)
+* source (google_photo, google_street_view, website, daycare_uploaded)
+* width
+* height
+
+### daycare_reviews
+
+### daycare_enrichments
 
