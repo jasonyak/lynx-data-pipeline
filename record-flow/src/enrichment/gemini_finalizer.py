@@ -78,6 +78,81 @@ class DaycareRecord(BaseModel):
     ranking: Ranking
 
 
+def _build_finalized_record(gemini_response: Dict[str, Any], record: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Flatten Gemini's nested response and merge with pipeline data
+    to create a database-ready record.
+    """
+    google_data = record.get("google_data", {})
+    contact = record.get("contact", {})
+    address_data = record.get("address", {})
+
+    return {
+        # Identity
+        "daycare_id": record.get("id"),
+        "name": record.get("name"),
+
+        # Scoring (from Gemini ranking)
+        "trust_score": gemini_response.get("ranking", {}).get("trust_score"),
+        "safety_and_ratio": gemini_response.get("ranking", {}).get("score_breakdown", {}).get("safety_and_ratio"),
+        "teacher_quality": gemini_response.get("ranking", {}).get("score_breakdown", {}).get("teacher_quality"),
+        "learning_and_growth": gemini_response.get("ranking", {}).get("score_breakdown", {}).get("learning_and_growth"),
+        "cleanliness_facilities": gemini_response.get("ranking", {}).get("score_breakdown", {}).get("cleanliness_facilities"),
+
+        # Google reviews
+        "review_score": google_data.get("rating", {}).get("stars"),
+        "review_count": google_data.get("rating", {}).get("count"),
+
+        # Program details (from Gemini structured_data)
+        "min_age_months": gemini_response.get("structured_data", {}).get("min_age_months"),
+        "max_age_months": gemini_response.get("structured_data", {}).get("max_age_months"),
+        "program_type": gemini_response.get("structured_data", {}).get("program_type"),
+        "meals_provided": gemini_response.get("structured_data", {}).get("meals_provided"),
+        "snacks_provided": gemini_response.get("structured_data", {}).get("snacks_provided"),
+        "teacher_student_ratio": gemini_response.get("structured_data", {}).get("teacher_student_ratio"),
+        "cameras": gemini_response.get("structured_data", {}).get("cameras"),
+        "secure_entry": gemini_response.get("structured_data", {}).get("secure_entry"),
+        "availability_status": gemini_response.get("structured_data", {}).get("availability_status"),
+        "price_start": gemini_response.get("structured_data", {}).get("price_start"),
+        "price_end": gemini_response.get("structured_data", {}).get("price_end"),
+        "certifications": gemini_response.get("structured_data", {}).get("certifications", []),
+
+        # From pipeline
+        "capacity": record.get("capacity"),
+        "operating_hours": google_data.get("operating_hours"),
+        "is_internal": False,
+
+        # Marketing (from Gemini)
+        "thumbnail_url": gemini_response.get("media_selection", {}).get("best_thumbnail_path"),
+        "headline": gemini_response.get("marketing_content", {}).get("headline"),
+        "sub_headline": gemini_response.get("marketing_content", {}).get("sub_headline"),
+        "description": gemini_response.get("marketing_content", {}).get("description"),
+        "search_tags": gemini_response.get("search_tags", []),
+
+        # Insights (from Gemini, stored as JSONB)
+        "insights": gemini_response.get("insider_insight"),
+
+        # Links
+        "google_maps_url": google_data.get("google_maps_url"),
+        "google_place_id": google_data.get("place_id"),
+        "website_url": google_data.get("contact", {}).get("website") or contact.get("website"),
+
+        # Contact
+        "email": contact.get("email"),
+        "director_name": contact.get("director_name"),
+        "phone": google_data.get("contact", {}).get("phone") or contact.get("phone"),
+
+        # Location
+        "address": google_data.get("address") or address_data.get("street"),
+        "city": address_data.get("city"),
+        "state": address_data.get("state"),
+        "zip": address_data.get("zip"),
+        "country": "US",
+        "latitude": google_data.get("street_view_metadata", {}).get("lat"),
+        "longitude": google_data.get("street_view_metadata", {}).get("lng"),
+    }
+
+
 def _resize_image_to_bytes(image_path: str, max_dim: int = 500) -> bytes:
     """
     Resizes image so max dimension is max_dim, converts to JPEG bytes.
@@ -263,12 +338,13 @@ Return the EXACT original path from the input image list.
             usage_stats["output_tokens"] = response.usage_metadata.candidates_token_count or 0
             
         try:
-             # With Structured Outputs, the parsed object is often available directly, 
+             # With Structured Outputs, the parsed object is often available directly,
              # but to be safe and consistent with standard text handling:
              text = response.text.strip()
-             final_data = json.loads(text)
-             
-             record["finalized_record"] = final_data
+             gemini_data = json.loads(text)
+
+             # Flatten Gemini response and merge with pipeline data
+             record["finalized_record"] = _build_finalized_record(gemini_data, record)
              logger.info(f"[{record.get('id')}] Finalized record for {record.get('name')}")
              
         except Exception as e:
