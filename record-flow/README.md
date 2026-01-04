@@ -47,25 +47,24 @@ $$$$: >$2800/mo
 
 * daycare_id
 * name
+
 * trust_score
 * safety_and_ratio
 * teacher_quality
 * learning_and_growth
 * cleanliness_facilities
-* trust_score_explaination (new)
+
 * review_score
-* age_start_months
-* age_end_months
+
+* min_age_months
+* max_age_months
 * program_type
 * meals_provided
 * snacks_provided
-* ratios
+* teacher_student_ratio
 * cameras
 * secure_entry
-* start_hour_of_operation
-* end_hour_of_operation
-* availability
-* availability_explaination (new)
+* availability_status
 * price_start
 * price_end
 * certifications 
@@ -79,6 +78,7 @@ $$$$: >$2800/mo
 
 * google_maps_url
 * website_url
+
 * email
 * director
 * phone

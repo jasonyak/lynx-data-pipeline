@@ -35,19 +35,18 @@ class MarketingContent(BaseModel):
     description: str = Field(max_length=600, description="Max 600 chars. 2 paragraphs. The 'Details'. Informative, warm, and natural. Tells the story of the program, the director, and the space without sounding like a brochure.")
 
 class StructuredData(BaseModel):
-    philosophy: Literal['Montessori', 'Reggio', 'Play-Based', 'Academic', 'Faith-Based', 'Waldorf', 'General']
-    schedule_type: Literal['Full-Time', 'Part-Time', 'Both']
-    price_range: Literal['$', '$$', '$$$', '$$$$'] = Field(description="Estimated monthly tuition: $ (<$1000), $$ ($1000-$1800), $$$ ($1800-$2800), $$$$ (>$2800)")
+    program_type: Literal['Montessori', 'Reggio', 'Waldorf', 'Other']
     availability_status: Literal['Waitlist', 'Open Enrollment', 'Call to Confirm']
     min_age_months: Optional[int]
     max_age_months: Optional[int]
-    meals_provided: bool
-    snacks_provided: bool
-
-class ParentSurvivalGuide(BaseModel):
-    communication_method: Literal['App (Photos/Updates)', 'Email/Text', 'Paper Daily Sheet', 'Verbal Only']
-    potty_training_support: Literal['Fully Supported', 'Assisted', 'Must Be Trained']
-    screen_time_policy: Literal['Zero Screen Time', 'Educational Only', 'TV/Movie Time Occasional']
+    meals_provided: Optional[bool] = Field(default=None, description="Whether meals are provided")
+    snacks_provided: Optional[bool] = Field(default=None, description="Whether snacks are provided")
+    price_start: Optional[int] = Field(default=None, description="Estimated monthly tuition start price in dollars")
+    price_end: Optional[int] = Field(default=None, description="Estimated monthly tuition end price in dollars")
+    teacher_student_ratio: Optional[str] = Field(default=None, description="Teacher to student ratio (e.g., '1:4', '1:6')")
+    cameras: Optional[bool] = Field(default=None, description="Whether cameras are available for parents")
+    secure_entry: Optional[bool] = Field(default=None, description="Whether secure entry/access control exists")
+    certifications: List[str] = Field(default_factory=list, description="List of certifications (e.g., 'NAEYC', 'Texas Rising Star')")
 
 class InsiderInsight(BaseModel):
     sentiment_summary: str = Field(description="A 2-3 sentence summary of parent reputation.")
@@ -73,8 +72,7 @@ class Ranking(BaseModel):
 class DaycareRecord(BaseModel):
     marketing_content: MarketingContent
     structured_data: StructuredData
-    parent_survival_guide: ParentSurvivalGuide
-    search_tags: List[str] = Field(description="List of 5-10 standardized tags (e.g., 'cloth-diaper-friendly', 'camera-access', 'organic-food', 'security-guard')")
+    search_tags: List[str] = Field(description="List of 0-5 standardized tags (e.g., 'bilingual', 'organic-food', 'outdoor-play')")
     insider_insight: InsiderInsight
     media_selection: MediaSelection
     ranking: Ranking
@@ -166,23 +164,59 @@ def enrich_with_gemini_finalizer(record: Dict[str, Any]) -> Tuple[Dict[str, Any]
         # 3. Construct Prompt
         # Note: Schema is not included in the text prompt anymore, it's passed via config directly.
         prompt_text = f"""
-        You are a hyper-vigilant, data-driven parent who has visited 20 schools and is hard to impress.
-        Analyze the provided data (Basic Record, Research, Website Content) and photos to grade this daycare.
-        
-        Goal: Create the final, user-facing record for a premium daycare marketplace.
-        
-        CRITICAL SCORING RULES:
-        1. BASELINE IS 50 (AVERAGE): A score of 50 means "Licensed, Safe, Standard". It meets legal minimums.
-        2. EVIDENCE REQUIRED: No proof = No points. If 'cameras' or 'low ratios' aren't explicitly stated, assume they don't exist.
-        3. BE A SKEPTIC: Do not give benefit of doubt. Higher scores (60-80) require specific proof of quality (e.g. "organic meals", "bilingual", "master's degree teachers").
-        4. TOP TIERS ARE RARE: 80+ is "Verified" (Great). 95+ is "Top Rated" (Unicorn/Flawless).
+You are a hyper-vigilant, data-driven parent who has visited 20 schools and is hard to impress.
+Analyze the provided data (Basic Record, Research, Website Content) and photos to grade this daycare.
 
-        Instructions:
-        1. Be factual but warm. No AI slop. 
-        2. Parents care about Safety, Love, and Learning.
-        3. For 'marketing_content', follow the "Essential Trio" format strictly.
-        4. Choose the best thumbnail from the provided images and return its EXACT original path from the input list.
-        """
+Goal: Create the final, user-facing record for a premium daycare marketplace.
+
+CRITICAL: NO HALLUCINATIONS
+- Parents will read this. Wrong info damages trust and wastes their time.
+- If data is NOT explicitly stated in the source material, use null.
+- NEVER guess prices, ratios, certifications, or safety features.
+- Only include search_tags for attributes clearly evidenced in the data.
+- For marketing_content, only describe what you can verify from the sources.
+
+STRUCTURED DATA RULES:
+- program_type: Use 'Other' unless Montessori/Reggio/Waldorf is explicitly mentioned
+- price_start/price_end: null unless exact prices are stated
+- teacher_student_ratio: null unless explicitly stated (e.g., "1:4 ratio")
+- cameras/secure_entry: null unless explicitly mentioned
+- certifications: Only include if named specifically (e.g., "NAEYC accredited", "Texas Rising Star")
+- meals_provided/snacks_provided: null unless explicitly stated
+
+SCORING RULES:
+1. BASELINE IS 50 (AVERAGE): A score of 50 means "Licensed, Safe, Standard". It meets legal minimums.
+2. EVIDENCE REQUIRED: No proof = No points. If 'cameras' or 'low ratios' aren't explicitly stated, assume they don't exist.
+3. BE A SKEPTIC: Do not give benefit of doubt. Higher scores (60-80) require specific proof of quality.
+4. TOP TIERS ARE RARE: 80+ is "Verified" (Great). 95+ is "Top Rated" (Unicorn/Flawless).
+
+MARKETING CONTENT:
+- headline/sub_headline: Factual, not aspirational
+- description: Only include details found in source data. No filler phrases.
+
+INSIDER INSIGHT:
+- sentiment_summary: Summarize actual reviews/testimonials. If none exist, say "No parent reviews available."
+- red_flags: Only cite verifiable concerns (inspection reports, reviews)
+- parent_tips: Only if genuinely useful info exists in the data
+
+THUMBNAIL SELECTION:
+The thumbnail must make a parent stop scrolling and click. In a list of 20 daycares, this image is your only chance to stand out.
+
+Selection criteria:
+1. SHOW THE DIFFERENTIATOR - Match the headline. If it's "Montessori with Large Backyard," show the backyard or Montessori materials, not a generic classroom.
+2. UNIQUE > GENERIC - A distinctive reading nook beats a standard classroom. A treehouse beats a plastic play structure.
+3. WARMTH & LIFE - Spaces that look lived-in and loved. Natural light, color, texture.
+4. INSTANT RECOGNITION - Parent should immediately understand what kind of place this is.
+
+Avoid:
+- Generic classroom that could be anywhere
+- Exterior/building shots (looks like a business, not a home for kids)
+- Logos or marketing graphics
+- Dark, blurry, or cluttered images
+- Empty sterile spaces
+
+Return the EXACT original path from the input image list.
+"""
         
         # 4. Call Gemini
         # We need to explicitly wrap images as Parts
