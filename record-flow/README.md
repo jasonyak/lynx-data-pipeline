@@ -87,7 +87,7 @@ Main daycare records with all enriched data ready for database insert
 |-------|------|-------------|
 | min_age_months | INTEGER | Minimum age in months |
 | max_age_months | INTEGER | Maximum age in months |
-| program_type | TEXT | Program type: 'Montessori', 'Reggio', 'Waldorf', 'Other' |
+| program_type | TEXT | Program type: 'Montessori', 'Reggio', 'Waldorf', 'Play-based', 'Academic', 'Religious', 'Nature-based', 'Language Immersion' |
 | meals_provided | BOOLEAN | Whether meals are provided |
 | snacks_provided | BOOLEAN | Whether snacks are provided |
 | teacher_student_ratio | TEXT | Teacher to student ratio (e.g., '1:4') |

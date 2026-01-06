@@ -40,7 +40,7 @@ class MarketingContent(BaseModel):
     description: str = Field(max_length=600, description="Max 600 chars. 2 paragraphs. The 'Details'. Informative, warm, and natural. Tells the story of the program, the director, and the space without sounding like a brochure.")
 
 class StructuredData(BaseModel):
-    program_type: Literal['Montessori', 'Reggio', 'Waldorf', 'Other']
+    program_type: Literal['Montessori', 'Reggio', 'Waldorf', 'Play-based', 'Academic', 'Religious', 'Nature-based', 'Language Immersion']
     availability_status: Literal['Waitlist', 'Open Enrollment', 'Call to Confirm']
     min_age_months: Optional[int]
     max_age_months: Optional[int]
@@ -257,7 +257,7 @@ CRITICAL: NO HALLUCINATIONS
 - For marketing_content, only describe what you can verify from the sources.
 
 STRUCTURED DATA RULES:
-- program_type: Use 'Other' unless Montessori/Reggio/Waldorf is explicitly mentioned
+- program_type: Choose best fit. 'Play-based' is standard for most home daycares/centers without specific pedagogy. 'Academic' for curriculum-heavy. 'Religious' for faith-based. 'Nature-based' for forest schools. 'Language Immersion' for bilingual.
 - price_start/price_end: null unless exact prices are stated
 - teacher_student_ratio: null unless explicitly stated (e.g., "1:4 ratio")
 - cameras/secure_entry: null unless explicitly mentioned
