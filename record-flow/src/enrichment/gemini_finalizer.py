@@ -83,7 +83,7 @@ class DaycareRecord(BaseModel):
     ranking: Ranking
 
 
-def _build_finalized_record(gemini_response: Dict[str, Any], record: Dict[str, Any]) -> Dict[str, Any]:
+def _build_finalized_record(gemini_response: Dict[str, Any], record: Dict[str, Any], image_candidates: List[str]) -> Dict[str, Any]:
     """
     Flatten Gemini's nested response and merge with pipeline data
     to create a database-ready record.
@@ -152,6 +152,9 @@ def _build_finalized_record(gemini_response: Dict[str, Any], record: Dict[str, A
         "country": "US",
         "latitude": google_data.get("street_view_metadata", {}).get("lat"),
         "longitude": google_data.get("street_view_metadata", {}).get("lng"),
+
+        # Assets
+        "photos": image_candidates,
     }
 
 
@@ -360,7 +363,7 @@ Return the EXACT original path from the input image list.
              gemini_data = json.loads(text)
 
              # Flatten Gemini response and merge with pipeline data
-             record["finalized_record"] = _build_finalized_record(gemini_data, record)
+             record["finalized_record"] = _build_finalized_record(gemini_data, record, image_candidates)
              logger.info(f"[{record.get('id')}] Finalized record for {record.get('name')}")
              
         except Exception as e:

@@ -119,6 +119,8 @@ class WebsiteScraper:
             return False
         return False
 
+
+
     async def _download_asset(self, page, url, save_path):
         try:
             # We can use page.request to fetch assets in context

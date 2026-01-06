@@ -37,6 +37,7 @@ class LocalRefiner:
         Returns top_n image paths.
         """
         if not image_paths:
+            logger.debug("rank_images called with empty list")
             return []
             
         # Deduplicate paths (scraper might report same file multiple times if found on multiple pages)

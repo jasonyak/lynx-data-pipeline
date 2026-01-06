@@ -18,7 +18,7 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Optional, Tuple
 
 # Configure logging before other imports
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s', force=True)
+logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s', force=True)
 logger = logging.getLogger(__name__)
 logging.getLogger("google_genai.models").setLevel(logging.WARNING)
 logging.getLogger("httpx").setLevel(logging.WARNING)

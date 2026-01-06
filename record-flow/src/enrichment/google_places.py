@@ -50,6 +50,7 @@ def find_and_enrich(record):
             
     address_query = ", ".join(address_parts)
     full_query = f"{name} {address_query}".strip()
+    logger.info(f"[{record.get('id')}] Generated Query: '{full_query}' for record {name}")
 
     if not full_query:
         logger.debug(f"Insufficient data to search for record {record.get('id')}")

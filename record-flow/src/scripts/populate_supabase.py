@@ -206,7 +206,7 @@ def process_record(supabase: Client, line: str, dry_run: bool = False):
             print(f"  Error inserting reviews: {e}")
 
     # 3. Handle Assets
-    photos = google_data.get("photos", [])
+    photos = finalized.get("photos", [])
     asset_rows = []
     
     for i, photo_path in enumerate(photos):
@@ -227,14 +227,29 @@ def process_record(supabase: Client, line: str, dry_run: bool = False):
     
     # Also handle PDF assets from scraped data if any (not in example JSON but nice to have)
     
+    # 3b. Handle Street View
+    street_view_path = google_data.get("street_view_path")
+    if street_view_path and os.path.exists(street_view_path):
+        fname = "street_view.jpg" # Standardize name
+        dest = f"{daycare_id}/{fname}"
+        
+        public_url = upload_file(supabase, street_view_path, dest)
+        if public_url:
+            asset_rows.append({
+                "daycare_id": daycare_id,
+                "url": public_url,
+                "type": "image",
+                "source": "google_street_view"
+            })
+            
     if asset_rows:
         try:
             # We don't have a good unique key for assets other than ID. verify duplicates?
             # For now, we always insert. This will duplicate assets on re-runs.
             # To avoid duplicates, we could Delete existing assets for this daycare and re-insert?
             # Or assume the URL is unique enough? 
-            # Let's delete existing 'google_photo' assets for this daycare first to be clean.
-            supabase.table("daycare_assets").delete().eq("daycare_id", daycare_id).eq("source", "google_photo").execute()
+            # Let's delete existing 'google_photo' and 'google_street_view' assets for this daycare first to be clean.
+            supabase.table("daycare_assets").delete().eq("daycare_id", daycare_id).in_("source", ["google_photo", "google_street_view"]).execute()
             
             supabase.table("daycare_assets").insert(asset_rows).execute()
             print(f"  Inserted {len(asset_rows)} assets")
