@@ -24,41 +24,14 @@ else:
     logger.warning("GEMINI_API_KEY not found. Gemini enrichment will be skipped.")
     client = None
 
-# Define the "Background Check" Schema for parent-focused daycare research
+# Simplified Schema: Only summaries, no nested source lists
 SCHEMA_INSTRUCTION = """
 Return a valid JSON object. The schema must strictly follow this structure:
 
 {
-  "safety": {
-    "summary": "string (2-4 sentences summarizing any safety concerns, violations, legal issues, or news. If nothing found, say 'No safety concerns found.')",
-    "sources": [
-      {
-        "text": "string (exact quote or key finding)",
-        "url": "string",
-        "source_name": "string (e.g. 'Austin American-Statesman', 'BBB', 'Texas HHS')"
-      }
-    ]
-  },
-  "reputation": {
-    "summary": "string (2-4 sentences summarizing overall reputation from reviews. Include sentiment and common themes.)",
-    "sources": [
-      {
-        "text": "string (exact quote from review)",
-        "url": "string",
-        "source_name": "string (e.g. 'Google Reviews', 'Yelp', 'Facebook', 'Reddit')"
-      }
-    ]
-  },
-  "staff_insights": {
-    "summary": "string or null (2-4 sentences about employee experiences, turnover, management. Null if no employee reviews found.)",
-    "sources": [
-      {
-        "text": "string (exact quote from employee review)",
-        "url": "string",
-        "source_name": "string (name of the website where review was found)"
-      }
-    ]
-  },
+  "safety_summary": "string (2-4 sentences summarizing any safety concerns, violations, legal issues, or news. If nothing found, say 'No safety concerns found.')",
+  "reputation_summary": "string (2-4 sentences summarizing overall reputation from reviews. Include sentiment and common themes.)",
+  "staff_summary": "string or null (2-4 sentences about employee experiences, turnover, management. Null if no employee reviews found.)",
   "operational_info": {
     "years_in_operation": "string or null",
     "philosophy": "string or null (e.g. Montessori, Play-based, Reggio)",
@@ -73,8 +46,7 @@ Return a valid JSON object. The schema must strictly follow this structure:
 }
 
 CRITICAL RULES:
-- Use null for unknown fields. Use empty arrays [] if no sources found.
-- Only include information you can verify with a source URL.
+- Use null for unknown fields.
 - Do NOT make inferences or assumptions - report only what is explicitly stated in sources.
 - Summaries must be based on direct evidence from sources, not your interpretation.
 """
@@ -82,7 +54,8 @@ CRITICAL RULES:
 def enrich_with_gemini(record):
     """
     Uses Gemini with Google Search to conduct a background check on a daycare.
-    Prioritizes safety signals, reputation, and staff insights over operational details.
+    Prioritizes safety signals, reputation, and staff insights.
+    Uses Grounding Metadata for verified sources.
     """
     if not client:
         return record, {"input_tokens": 0, "output_tokens": 0}
@@ -116,16 +89,18 @@ def enrich_with_gemini(record):
 
         PRIORITIES (in order of importance):
         1. SAFETY: Any news about incidents, violations, complaints, or legal issues
-        2. REPUTATION: What are parents and employees actually saying? Include exact quotes.
+        2. REPUTATION: What are parents and employees actually saying?
         3. OPERATIONAL: Basic info like pricing, hours, philosophy (only if found)
 
         IMPORTANT - Only report verifiable facts:
-        - Use direct quotes wherever possible
-        - Include the source URL for every claim
         - Do NOT infer, speculate, or generalize
         - Do NOT make assumptions about things not explicitly stated
         - If information is unclear or ambiguous, omit it
-        - If you find nothing concerning, report empty arrays for those fields
+        
+        VERIFICATION REQUIREMENT:
+        - You MUST verify every specific claim (dates, numbers, scores, licenses).
+        - If you cannot find a source for a specific detail, do NOT include it.
+        - The goal is 100% accuracy with verifiable sources.
 
         {SCHEMA_INSTRUCTION}
         """
@@ -139,7 +114,8 @@ def enrich_with_gemini(record):
                     model=GEMINI_MODEL_ID,
                     contents=prompt,
                     config=types.GenerateContentConfig(
-                        tools=[types.Tool(google_search=types.GoogleSearch())]
+                        tools=[types.Tool(google_search=types.GoogleSearch())],
+                        response_mime_type="text/plain"
                     )
                 )
                 break  # Success, exit retry loop
@@ -167,11 +143,36 @@ def enrich_with_gemini(record):
              
              gemini_data = json.loads(text)
              
+             # --- Grounding Metadata Extraction ---
+             verified_sources = []
+             if response.candidates:
+                 candidate = response.candidates[0]
+                 
+                 gm = getattr(candidate, 'grounding_metadata', None)
+                 
+                 if gm and hasattr(gm, 'grounding_chunks') and gm.grounding_chunks:
+                     processed_urls = set()
+                     for chunk in gm.grounding_chunks:
+                         if chunk.web and chunk.web.uri:
+                             uri = chunk.web.uri
+                             if uri in processed_urls: 
+                                 continue # Dedupe
+                             
+                             title = chunk.web.title or uri
+                             verified_sources.append({
+                                 "url": uri,
+                                 "title": title,
+                                 "source_name": title # Fallback/Duplicate for schema
+                             })
+                             processed_urls.add(uri)
+                             
+             gemini_data["verified_sources"] = verified_sources
+
              record["gemini_search_data"] = gemini_data
              logger.debug(f"[{record.get('id')}] Gemini enriched: {name}")
              
         except Exception as e:
-            logger.warning(f"[{record.get('id')}] Failed to parse Gemini JSON for {name}: {e}")
+            logger.warning(f"[{record.get('id')}] Failed to parse Gemini JSON or extract grounding for {name}: {e}")
             # Safeguard against missing text
             raw = getattr(response, 'text', str(response))
             record["gemini_search_data"] = {"status": "FAILED_PARSE", "raw": raw[:200]}

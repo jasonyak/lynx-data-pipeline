@@ -256,32 +256,33 @@ def process_record(supabase: Client, line: str, dry_run: bool = False):
         except Exception as e:
             print(f"  Error inserting assets: {e}")
 
-    # 4. Handle Enrichments
-    enrichment_rows = []
+    # 4. Handle Enrichments (New Flat Schema)
     gemini_data = data.get("gemini_search_data", {})
     
-    # gemini_search_data has keys like 'safety', 'reputation' object
-    for key, value in gemini_data.items():
-        if key == "operational_info":
-            continue
-            
-        if isinstance(value, dict):
-            # summary, sources
-            enrichment_rows.append({
-                "daycare_id": daycare_id,
-                "source": "gemini_search",
-                "type": key,
-                "summary": value.get("summary"),
-                "sources": value.get("sources") # JSONB
-            })
-            
-    if enrichment_rows:
+    # We only upsert if we have meaningful data (summary or sources)
+    # Check if we have at least one summary or verified source
+    has_enrichment = (
+        gemini_data.get("safety_summary") or 
+        gemini_data.get("reputation_summary") or 
+        gemini_data.get("staff_summary") or 
+        gemini_data.get("verified_sources")
+    )
+    
+    if has_enrichment:
+        enrichment_data = {
+            "daycare_id": daycare_id,
+            "safety_summary": gemini_data.get("safety_summary"),
+            "reputation_summary": gemini_data.get("reputation_summary"),
+            "staff_summary": gemini_data.get("staff_summary"),
+            "operational_info": gemini_data.get("operational_info"),
+            "verified_sources": gemini_data.get("verified_sources"),
+            "updated_at": "now()"
+        }
+
         try:
-             # Delete existing enrichments for clean slate on re-run
-            supabase.table("daycare_enrichments").delete().eq("daycare_id", daycare_id).eq("source", "gemini_search").execute()
-            
-            supabase.table("daycare_enrichments").insert(enrichment_rows).execute()
-            print(f"  Inserted {len(enrichment_rows)} enrichments")
+             # Upsert into 1:1 table
+            supabase.table("daycare_enrichments").upsert(enrichment_data).execute()
+            print(f"  Upserted enrichment for {daycare_id}")
         except Exception as e:
             print(f"  Error inserting enrichments: {e}")
 
