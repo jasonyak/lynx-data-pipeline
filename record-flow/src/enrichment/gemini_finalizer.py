@@ -37,7 +37,7 @@ else:
 class MarketingContent(BaseModel):
     headline: str = Field(description="4-7 words. The 'Title'. Specific and weirdly clear. (e.g. 'Montessori Home with Large Yard' or 'Bright Horizons at The Domain').")
     sub_headline: str = Field(description="1 sentence. The 'Hook'. Key logistics + vibe. (e.g. 'Full-time care for infants to pre-k with a focus on outdoor play and organic meals.').")
-    description: str = Field(max_length=600, description="Max 600 chars. 2 paragraphs. The 'Details'. Informative, warm, and natural. Tells the story of the program, the director, and the space without sounding like a brochure.")
+    description: str = Field(max_length=600, description="STRICT limit 600 chars. 2 paragraphs max. The 'Details'. Informative, warm, and natural. Tells the story of the program, the director, and the space without sounding like a brochure.")
 
 class StructuredData(BaseModel):
     program_type: Literal['Montessori', 'Reggio', 'Waldorf', 'Play-based', 'Academic', 'Religious', 'Nature-based', 'Language Immersion']
@@ -128,7 +128,7 @@ def _build_finalized_record(gemini_response: Dict[str, Any], record: Dict[str, A
         "thumbnail_url": gemini_response.get("media_selection", {}).get("best_thumbnail_path"),
         "headline": gemini_response.get("marketing_content", {}).get("headline"),
         "sub_headline": gemini_response.get("marketing_content", {}).get("sub_headline"),
-        "description": gemini_response.get("marketing_content", {}).get("description"),
+        "description": _enforce_length_limit(gemini_response.get("marketing_content", {}).get("description"), record.get("id"), 600),
         "search_tags": gemini_response.get("search_tags", []),
 
         # Insights (from Gemini, stored as JSONB)
@@ -157,6 +157,43 @@ def _build_finalized_record(gemini_response: Dict[str, Any], record: Dict[str, A
         "photos": image_candidates,
     }
 
+
+def _enforce_length_limit(text: str, record_id: Any, max_length: int = 600) -> str:
+    """
+    Truncates text to max_length, attempting to cut at the last sentence end.
+    """
+    if not text:
+        return ""
+    
+    if len(text) <= max_length:
+        return text
+
+    logger.info(f"[{record_id}] Description truncated from {len(text)} to {max_length} chars.")
+        
+    # Take a slice slightly longer than max_length to find the best cut point? 
+    # Actually, we must cut strictly AT or BEFORE max_length.
+    truncated = text[:max_length]
+    
+    # Check for sentence endings in the last 100 chars
+    # We look for the last occurrence of '.', '!', or '?'
+    last_period = truncated.rfind('.')
+    last_exclaim = truncated.rfind('!')
+    last_question = truncated.rfind('?')
+    
+    best_cut = max(last_period, last_exclaim, last_question)
+    
+    # If we found a sentence ending reasonably close to the end (within last 150 chars), cut there.
+    # Otherwise, we might be cutting in the middle of a really long sentence or paragraph.
+    if best_cut > max_length - 150:
+        return truncated[:best_cut+1]
+        
+    # Fallback: Cut at the last space to avoid splitting a word
+    last_space = truncated.rfind(' ')
+    if last_space != -1:
+        return truncated[:last_space] + "..."
+        
+    # Worst case: hard cut
+    return truncated + "..."
 
 def _resize_image_to_bytes(image_path: str, max_dim: int = 500) -> bytes:
     """
