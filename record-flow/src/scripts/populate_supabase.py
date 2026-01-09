@@ -142,6 +142,7 @@ def process_record(supabase: Client, line: str, dry_run: bool = False):
         "description": finalized.get("description"),
         "search_tags": finalized.get("search_tags"),
         "insights": finalized.get("insights"),
+        "status": "ACTIVE",
         "google_maps_url": finalized.get("google_maps_url"),
         "google_place_id": finalized.get("google_place_id"),
         "website_url": finalized.get("website_url"),
