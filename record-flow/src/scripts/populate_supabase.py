@@ -114,11 +114,16 @@ def process_record(supabase: Client, line: str, dry_run: bool = False):
     # We assume 'finalized_record' schema matches 'daycares' table columns.
     # Filter out keys that might not exist in table or complex objects if needed.
     
+    # Pack explanation and tier into score_breakdown JSON
+    score_breakdown = finalized.get("score_breakdown") or {}
+    score_breakdown["explanation"] = finalized.get("trust_score_explanation")
+    score_breakdown["tier"] = finalized.get("ranking_tier")
+
     upsert_data = {
         "daycare_id": daycare_id,
         "name": finalized.get("name"),
         "trust_score": finalized.get("trust_score"),
-        "score_breakdown": finalized.get("score_breakdown"),
+        "score_breakdown": score_breakdown,
         "review_score": finalized.get("review_score"),
         "review_count": finalized.get("review_count"),
         "min_age_months": finalized.get("min_age_months"),

@@ -63,16 +63,21 @@ class MediaSelection(BaseModel):
     best_thumbnail_path: str = Field(description="Best representative image path from inputs, EXACT MATCH")
     selection_reason: str
 
+class CategoryScore(BaseModel):
+    score: int = Field(ge=0, le=30, description="Score for this category.")
+    improvement_tip: str = Field(description="One sentence actionable tip for the DAYCARE OWNER to improve this score. (e.g. 'Add staff bios to your website', 'Upload bright indoor photos').")
+
 class ScoreBreakdown(BaseModel):
-    safety_and_ratio: int = Field(ge=0, le=30)
-    teacher_quality: int = Field(ge=0, le=30)
-    learning_and_growth: int = Field(ge=0, le=25)
-    cleanliness_facilities: int = Field(ge=0, le=15)
+    teacher_quality: CategoryScore = Field(description="Max 30 pts. Staff tenure, ratios, bios, specific reviews.")
+    parent_reputation: CategoryScore = Field(description="Max 20 pts. Social proof, review volume, rating consistency.")
+    safety_and_transparency: CategoryScore = Field(description="Max 25 pts. Licensing, cameras, policies, prices listed.")
+    facility_environment: CategoryScore = Field(description="Max 25 pts. Cleanliness, natural light, outdoor space, equipment quality.")
 
 class Ranking(BaseModel):
     trust_score: int = Field(ge=0, le=100)
+    trust_score_explanation: str = Field(description="One sentence summary for a PARENT explaining the score. (e.g. 'Excellent facilities and staff, but lacks transparent pricing online.')")
     score_breakdown: ScoreBreakdown
-    ranking_tier: Literal['Top Rated', 'Verified', 'Standard', 'Needs Review'] = Field(description="Strict Tiers: Top Rated (95-100, Flawless), Verified (80-94, Great), Standard (50-79, Safe/Average), Needs Review (<50, Red Flags).")
+    ranking_tier: Literal['Top Rated', 'Verified', 'Standard', 'Needs Review'] = Field(description="Top Rated (95+), Verified (80-94), Standard (50-79), Needs Review (<50).")
 
 class DaycareRecord(BaseModel):
     marketing_content: MarketingContent
@@ -81,7 +86,6 @@ class DaycareRecord(BaseModel):
     insider_insight: InsiderInsight
     media_selection: MediaSelection
     ranking: Ranking
-
 
 def _build_finalized_record(gemini_response: Dict[str, Any], record: Dict[str, Any], image_candidates: List[str]) -> Dict[str, Any]:
     """
@@ -99,7 +103,9 @@ def _build_finalized_record(gemini_response: Dict[str, Any], record: Dict[str, A
 
         # Scoring (from Gemini ranking)
         "trust_score": gemini_response.get("ranking", {}).get("trust_score"),
+        "trust_score_explanation": gemini_response.get("ranking", {}).get("trust_score_explanation"),
         "score_breakdown": gemini_response.get("ranking", {}).get("score_breakdown"),
+        "ranking_tier": gemini_response.get("ranking", {}).get("ranking_tier"),
 
         # Google reviews
         "review_score": google_data.get("rating", {}).get("stars"),
@@ -281,7 +287,8 @@ def enrich_with_gemini_finalizer(record: Dict[str, Any]) -> Tuple[Dict[str, Any]
         # 3. Construct Prompt
         # Note: Schema is not included in the text prompt anymore, it's passed via config directly.
         prompt_text = f"""
-You are a hyper-vigilant, data-driven parent who has visited 20 schools and is hard to impress.
+You are a "Vigilant Parent" AI agent. You are skeptical, protective, and data-driven.
+You have visited 20 schools and know exactly what to look for.
 Analyze the provided data (Basic Record, Research, Website Content) and photos to grade this daycare.
 
 Goal: Create the final, user-facing record for a premium daycare marketplace.
@@ -301,12 +308,6 @@ STRUCTURED DATA RULES:
 - certifications: Only include if named specifically (e.g., "NAEYC accredited", "Texas Rising Star")
 - meals_provided/snacks_provided: null unless explicitly stated
 
-SCORING RULES:
-1. BASELINE IS 50 (AVERAGE): A score of 50 means "Licensed, Safe, Standard". It meets legal minimums.
-2. EVIDENCE REQUIRED: No proof = No points. If 'cameras' or 'low ratios' aren't explicitly stated, assume they don't exist.
-3. BE A SKEPTIC: Do not give benefit of doubt. Higher scores (60-80) require specific proof of quality.
-4. TOP TIERS ARE RARE: 80+ is "Verified" (Great). 95+ is "Top Rated" (Unicorn/Flawless).
-
 MARKETING CONTENT:
 - headline/sub_headline: Factual, not aspirational
 - description: Only include details found in source data. No filler phrases.
@@ -318,21 +319,53 @@ INSIDER INSIGHT:
 
 THUMBNAIL SELECTION:
 The thumbnail must make a parent stop scrolling and click. In a list of 20 daycares, this image is your only chance to stand out.
-
 Selection criteria:
-1. SHOW THE DIFFERENTIATOR - Match the headline. If it's "Montessori with Large Backyard," show the backyard or Montessori materials, not a generic classroom.
-2. UNIQUE > GENERIC - A distinctive reading nook beats a standard classroom. A treehouse beats a plastic play structure.
+1. SHOW THE DIFFERENTIATOR - Match the headline.
+2. UNIQUE > GENERIC - A distinctive reading nook beats a standard classroom.
 3. WARMTH & LIFE - Spaces that look lived-in and loved. Natural light, color, texture.
 4. INSTANT RECOGNITION - Parent should immediately understand what kind of place this is.
-
-Avoid:
-- Generic classroom that could be anywhere
-- Exterior/building shots (looks like a business, not a home for kids)
-- Logos or marketing graphics
-- Dark, blurry, or cluttered images
-- Empty sterile spaces
-
+Avoid: Generic, Exterior, Logos, Dark/Blurry.
 Return the EXACT original path from the input image list.
+
+SCORING PHILOSOPHY: "The Balanced Quarters"
+- **Total Score = sum of 4 Categories (Max 25 pts each).**
+- **Strict Evidence Gates**: You cannot score high without proof.
+- **Start at 0** for every category. Adding points requires evidence.
+
+SCORING BREAKDOWN (100 pts):
+
+1. Safety & Transparency (Max 25 pts)
+   - **Key Evidence**: License + Prices.
+   - **25 pts**: "Open Book" (License Verified AND **Prices Listed**).
+   - **15 pts**: "Standard" (Licensed, but "Call for details").
+   - **0-10 pts**: "Opaque" (No license info found or very sparse).
+
+2. Facility & Environment (Max 25 pts)
+   - **Key Evidence**: Interior Photos.
+   - **CRITICAL GATE**: **No Interior Photos = Max 5 pts.**
+   - **25 pts**: "Premium Spaces" (Bright natural light, organized, happy vibes in photos).
+   - **10-20 pts**: "Standard School" (Safe/clean but generic or fluorescent lighting).
+   - **0-5 pts**: "Invisible/Exterior Only" (No photos or only outside).
+
+3. Teacher & Staff (Max 25 pts)
+   - **Key Evidence**: Staff Bios or Specific Reviews.
+   - **CRITICAL GATE**: **No Bios/Names = Max 10 pts.**
+   - **25 pts**: "Real Humans" (Staff Bios w/ photos AND/OR Specific praise in reviews).
+   - **15-20 pts**: "Good Team" (Mentioned as nice, but no specific bios).
+   - **0-10 pts**: "Unknown/Generic" (No names, no bios).
+
+4. Parent Reputation (Max 25 pts)
+   - **Key Evidence**: Reviews.
+   - **CRITICAL GATE**: **0 Reviews = 0 pts.**
+   - **25 pts**: "Community Favorite" (10+ reviews, 4.8+ stars).
+   - **15-20 pts**: "Good Standing" (Positive rating, but fewer reviews).
+   - **0 pts**: "Ghost" (0 reviews).
+
+
+
+For each scoring category, provide a specific "improvement_tip" for the OWNER.
+IMPORTANT: Wording must be platform-agnostic (e.g., "Upload verified photos to your profile", "Update your listing"). DO NOT reference "your website".
+For the overall score, provide a "trust_score_explanation" for the PARENT.
 """
         
         # 4. Call Gemini
