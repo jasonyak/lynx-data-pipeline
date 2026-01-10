@@ -154,6 +154,7 @@ class WebsiteScraper:
                  return json.load(f)
 
         visited_urls = set()
+        successful_urls = set() # Track pages that actually loaded
         queue = [(start_url, 0)] # (url, depth)
         collected_assets = []
         
@@ -177,6 +178,7 @@ class WebsiteScraper:
                 try:
                     # Relaxed wait condition to prevent timeouts on continuous network activity
                     await page.goto(current_url, wait_until="domcontentloaded", timeout=self.timeout_ms)
+                    successful_urls.add(current_url)
                     
                     # Scroll to bottom to encourage lazy loading
                     await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
@@ -320,11 +322,16 @@ class WebsiteScraper:
                 seen_assets.add(asset['original_url'])
                 unique_assets.append(asset)
 
+        # Website is considered active only if we successfully visited at least 1 page
+        website_active = len(successful_urls) > 0
+
         result = {
             "root_url": start_url,
             "timestamp": time.time(),
             "pages_crawled": len(visited_urls),
+            "pages_successful": len(successful_urls),
             "assets_found": len(unique_assets),
+            "website_active": website_active,
             "assets": unique_assets
         }
         
@@ -373,7 +380,7 @@ if __name__ == "__main__":
         clean_text_path = None
         if domain_dir:
              clean_text_path = os.path.join(domain_dir, "cleaned_content.txt")
-             clean_text_path = refiner.refine_text(all_txt, clean_text_path)
+             clean_text_path = refiner.refine_text(all_txt, clean_text_path, pdf_files=top_pdfs)
              
         # Update result for display
         result['verified_images'] = top_imgs

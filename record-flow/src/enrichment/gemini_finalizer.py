@@ -144,6 +144,7 @@ def _build_finalized_record(gemini_response: Dict[str, Any], record: Dict[str, A
         "google_maps_url": google_data.get("google_maps_url"),
         "google_place_id": google_data.get("place_id"),
         "website_url": google_data.get("contact", {}).get("website") or contact.get("website"),
+        "website_active": record.get("scraped_data", {}).get("website_active", True), # Default true for fallback compatibility
 
         # Contact
         "email": contact.get("email"),

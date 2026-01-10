@@ -74,12 +74,9 @@ def process_record(
             logger.info(f"[{record_id}] Skipping - Invalid status: {business_status}")
             return None
 
-        # Validation: Must have website
+        # Validation: relaxed to allow missing websites
         state_website = record.get("contact", {}).get("website")
         google_website = google_data.get("contact", {}).get("website")
-        if not state_website and not google_website:
-            logger.info(f"[{record_id}] Skipping - No website available")
-            return None
 
         # Step 2: Gemini research phase
         record, search_usage = enrich_with_gemini(record)
@@ -96,15 +93,24 @@ def process_record(
             logger.warning(f"[{record_id}] Written to retry file (gemini_search failed)")
 
         # Step 3: Website scraping
+        # Step 3: Website scraping and status check
         target_url = google_website or state_website
-        scraper = get_thread_scraper()
-        raw_scraped_data = scraper.scrape(target_url, record_id=record_id)
+        website_active = False
 
-        # Step 4: Local refinement (CLIP image ranking)
-        if raw_scraped_data and raw_scraped_data.get("assets_found", 0) > 0:
-            record["scraped_data"] = _refine_scraped_data(raw_scraped_data, refiner)
+        if target_url:
+            scraper = get_thread_scraper()
+            raw_scraped_data = scraper.scrape(target_url, record_id=record_id)
+            
+            # Trust the scraper's assessment (which is cached)
+            website_active = raw_scraped_data.get("website_active", False)
+                
+            # Step 4: Local refinement (CLIP image ranking)
+            if website_active and raw_scraped_data and raw_scraped_data.get("assets_found", 0) > 0:
+                record["scraped_data"] = _refine_scraped_data(raw_scraped_data, refiner)
+            else:
+                record["scraped_data"] = raw_scraped_data
         else:
-            record["scraped_data"] = raw_scraped_data
+            record["scraped_data"] = None
 
         # Step 5: Gemini final synthesis
         logger.info(f"[{record_id}] Finalizing with Gemini...")
@@ -137,9 +143,9 @@ def _refine_scraped_data(raw_data: dict, refiner: ThreadSafeRefiner) -> dict:
     all_images = [a['local_path'] for a in assets if a['type'] == 'image']
     top_images = refiner.rank_images(all_images, top_n=10)
 
-    # Filter PDFs by keywords
-    all_pdfs = [a['local_path'] for a in assets if a['type'] == 'pdf']
-    top_pdfs = refiner.filter_pdfs(all_pdfs, top_n=5)
+    # Pass full asset objects to allow filtering by original_url
+    all_pdf_assets = [a for a in assets if a['type'] == 'pdf']
+    top_pdfs = refiner.filter_pdfs(all_pdf_assets, top_n=5)
 
     # Refine text content
     all_text_files = [a['local_path'] for a in assets if a['type'] == 'text']
@@ -147,7 +153,7 @@ def _refine_scraped_data(raw_data: dict, refiner: ThreadSafeRefiner) -> dict:
     if all_text_files:
         domain_dir = os.path.dirname(all_text_files[0])
         clean_text_path = os.path.join(domain_dir, "cleaned_content.txt")
-        clean_text_path = refiner.refine_text(all_text_files, clean_text_path)
+        clean_text_path = refiner.refine_text(all_text_files, clean_text_path, pdf_files=top_pdfs)
 
     return {
         "root_url": raw_data.get("root_url"),
@@ -155,6 +161,7 @@ def _refine_scraped_data(raw_data: dict, refiner: ThreadSafeRefiner) -> dict:
         "verified_images": top_images,
         "pdf_assets": top_pdfs,
         "derived_body_text_path": clean_text_path,
+        "website_active": raw_data.get("website_active", False),
         "raw_stats": {
             "original_images": len(all_images),
             "original_text_files": len(all_text_files)

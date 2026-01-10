@@ -6,6 +6,11 @@ from PIL import Image
 from transformers import CLIPProcessor, CLIPModel
 from collections import Counter
 import re
+try:
+    from pypdf import PdfReader
+except ImportError:
+    PdfReader = None
+
 
 logger = logging.getLogger(__name__)
 
@@ -116,33 +121,44 @@ class LocalRefiner:
             # Fallback: just return the first N
             return valid_paths[:top_n]
 
-    def filter_pdfs(self, pdf_paths, top_n=5):
+    def filter_pdfs(self, pdf_assets, top_n=5):
         """
         Simple keyword-based scoring for PDFs.
+        Expects a list of asset dicts: [{'local_path': ..., 'original_url': ...}, ...]
+        Returns a list of local paths.
         """
-        if not pdf_paths:
+        if not pdf_assets:
             return []
 
         priority_keywords = ["handbook", "policy", "parent", "tuition", "rates", "enroll", "schedule", "calendar"]
         low_priority = ["menu", "lunch", "flyer", "news", "update"]
 
         scored_pdfs = []
-        for p in pdf_paths:
-            filename = os.path.basename(p).lower()
+        # Support both list of strings (old behavior, just in case) and list of dicts (new behavior)
+        for asset in pdf_assets:
+            if isinstance(asset, str):
+                path = asset
+                check_str = os.path.basename(asset).lower()
+            else:
+                path = asset.get('local_path')
+                check_str = asset.get('original_url', '').lower()
+                if not check_str: # Fallback if original_url missing
+                    check_str = os.path.basename(path).lower()
+            
             score = 0
             for kw in priority_keywords:
-                if kw in filename:
+                if kw in check_str:
                     score += 2
             for kw in low_priority:
-                if kw in filename:
+                if kw in check_str:
                     score -= 1
-            scored_pdfs.append((p, score))
+            scored_pdfs.append((path, score))
         
         # Sort descending
         scored_pdfs.sort(key=lambda x: x[1], reverse=True)
         return [x[0] for x in scored_pdfs[:top_n]]
 
-    def refine_text(self, text_files, output_path):
+    def refine_text(self, text_files, output_path, pdf_files=None):
         """
         Consolidates text from multiple files, removing repeating boilerplate lines.
         Saves result to output_path.
@@ -210,11 +226,46 @@ class LocalRefiner:
                 final_text.extend(filtered_lines)
                 final_text.append("\n")
 
+        # Track website text stats (approximation)
+        website_chars = sum(len(s) for s in final_text)
+
+        # 4. Integrate PDF Text
+        if pdf_files and PdfReader:
+            for pdf_path in pdf_files:
+                try:
+                    reader = PdfReader(pdf_path)
+                    pdf_text = []
+                    for page in reader.pages:
+                        extracted = page.extract_text()
+                        if extracted:
+                            pdf_text.append(extracted)
+                    
+                    if pdf_text:
+                        final_text.append(f"\n--- Source: {os.path.basename(pdf_path)} (PDF) ---\n")
+                        # Basic cleanup: compact multiple newlines
+                        full_pdf_body = "\n".join(pdf_text)
+                        full_pdf_body = re.sub(r'\n{3,}', '\n\n', full_pdf_body)
+                        final_text.append(full_pdf_body)
+                        final_text.append("\n")
+                except Exception as e:
+                    logger.warning(f"Failed to extract text from PDF {pdf_path}: {e}")
+                    
         full_content = "\n".join(final_text)
         
-        # Enforce max length (15k chars) to prevent context overflow
-        if len(full_content) > 15000:
-            full_content = full_content[:15000] + "\n...[Truncated]..."
+        # Calculate stats
+        total_raw_chars = len(full_content)
+        pdf_chars = total_raw_chars - website_chars
+        # Note: pdf_chars calculation is approximate because of the join("\n"), 
+        # but close enough for logging purposes.
+        
+        # Enforce max length (100k chars) to prevent context overflow, but allow rich context
+        if len(full_content) > 100000:
+            full_content = full_content[:100000] + "\n...[Truncated]..."
+            
+        final_chars = len(full_content)
+        pdf_count = len(pdf_files) if pdf_files else 0
+        
+        logger.info(f"Refined Content: Website (~{website_chars} chars) + {pdf_count} PDFs (~{pdf_chars} chars) -> Total {total_raw_chars} chars -> Sent to Gemini: {final_chars} chars")
         
         # Save
         try:

@@ -29,6 +29,8 @@ python src/scripts/unify_data.py --limit 10 --random
 
 # Filter by location (State, City, Zip)
 python src/scripts/unify_data.py --state TX --city Austin --zip 78758
+python src/scripts/unify_data.py --zip 78731
+
 ```
 
 #### 3. Process Flow (Enrichment)
