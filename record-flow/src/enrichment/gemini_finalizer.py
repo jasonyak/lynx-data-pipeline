@@ -64,20 +64,20 @@ class MediaSelection(BaseModel):
     selection_reason: str
 
 class CategoryScore(BaseModel):
-    score: int = Field(ge=0, le=30, description="Score for this category.")
+    score: int = Field(ge=0, le=25, description="Score for this category (0-25).")
     improvement_tip: str = Field(description="One sentence actionable tip for the DAYCARE OWNER to improve this score. (e.g. 'Add staff bios to your website', 'Upload bright indoor photos').")
 
 class ScoreBreakdown(BaseModel):
-    teacher_quality: CategoryScore = Field(description="Max 30 pts. Staff tenure, ratios, bios, specific reviews.")
-    parent_reputation: CategoryScore = Field(description="Max 20 pts. Social proof, review volume, rating consistency.")
-    safety_and_transparency: CategoryScore = Field(description="Max 25 pts. Licensing, cameras, policies, prices listed.")
-    facility_environment: CategoryScore = Field(description="Max 25 pts. Cleanliness, natural light, outdoor space, equipment quality.")
+    safety_and_transparency: CategoryScore = Field(description="Max 25 pts. Licensing, pricing transparency, safety policies, website presence.")
+    facility_environment: CategoryScore = Field(description="Max 25 pts. Photo quality, cleanliness, natural light, outdoor space.")
+    teacher_quality: CategoryScore = Field(description="Max 25 pts. Staff bios, credentials, specific praise in reviews.")
+    parent_reputation: CategoryScore = Field(description="Max 25 pts. Review sentiment, volume, rating, specific feedback.")
 
 class Ranking(BaseModel):
-    trust_score: int = Field(ge=0, le=100)
-    trust_score_explanation: str = Field(description="One sentence summary for a PARENT explaining the score. (e.g. 'Excellent facilities and staff, but lacks transparent pricing online.')")
+    trust_score: int = Field(ge=0, le=90, description="Total score (0-90). No score should exceed 90.")
+    trust_score_explanation: str = Field(description="One sentence summary for a PARENT explaining the score. (e.g. 'Good reputation but limited transparency on pricing and staff.')")
     score_breakdown: ScoreBreakdown
-    ranking_tier: Literal['Top Rated', 'Verified', 'Standard', 'Needs Review'] = Field(description="Top Rated (95+), Verified (80-94), Standard (50-79), Needs Review (<50).")
+    ranking_tier: Literal['Top Rated', 'Verified', 'Standard', 'Needs Review'] = Field(description="Top Rated (85-90), Verified (70-84), Standard (50-69), Needs Review (<50).")
 
 class DaycareRecord(BaseModel):
     marketing_content: MarketingContent
@@ -246,6 +246,9 @@ def enrich_with_gemini_finalizer(record: Dict[str, Any]) -> Tuple[Dict[str, Any]
         
         # Scraped Text
         scraped_data = record.get("scraped_data", {})
+        website_active = scraped_data.get("website_active", False)
+        context_parts.append(f"WEBSITE STATUS: website_active={website_active}")
+
         text_path = scraped_data.get("derived_body_text_path")
         if text_path and os.path.exists(text_path):
             try:
@@ -260,13 +263,22 @@ def enrich_with_gemini_finalizer(record: Dict[str, Any]) -> Tuple[Dict[str, Any]
         if gemini_search:
             context_parts.append(f"Insider Research Data: {json.dumps(gemini_search)}")
 
+        # Google Places Data (critical for Parent Reputation scoring)
+        google_data = record.get("google_data", {})
+        google_context = {
+            "rating_stars": google_data.get("rating", {}).get("stars"),
+            "rating_count": google_data.get("rating", {}).get("count"),
+            "reviews": google_data.get("reviews", []),
+            "operating_hours": google_data.get("operating_hours", {})
+        }
+        context_parts.append(f"Google Places Data: {json.dumps(google_context)}")
+
         # 2. Gather Images
         # Candidates: verified_images (Scraper) + photos (Google Places)
         image_candidates = []
         if scraped_data.get("verified_images"):
             image_candidates.extend(scraped_data["verified_images"])
-        
-        google_data = record.get("google_data", {})
+
         if google_data.get("photos"):
             image_candidates.extend(google_data["photos"])
             
@@ -328,39 +340,55 @@ Selection criteria:
 Avoid: Generic, Exterior, Logos, Dark/Blurry.
 Return the EXACT original path from the input image list.
 
-SCORING PHILOSOPHY: "The Balanced Quarters"
-- **Total Score = sum of 4 Categories (Max 25 pts each).**
-- **Strict Evidence Gates**: You cannot score high without proof.
-- **Start at 0** for every category. Adding points requires evidence.
+TRUST SCORE: Parent-Perspective Evaluation
 
-SCORING BREAKDOWN (100 pts):
+You are scoring this daycare as a SKEPTICAL PARENT would. Ask yourself: "Would I trust this place with my child?"
 
-1. Safety & Transparency (Max 25 pts)
-   - **Key Evidence**: License + Prices.
-   - **25 pts**: "Open Book" (License Verified AND **Prices Listed**).
-   - **15 pts**: "Standard" (Licensed, but "Call for details").
-   - **0-10 pts**: "Opaque" (No license info found or very sparse).
+**HARD RULES:**
+- **Maximum total score is 90.** No daycare is perfect. Reserve 85+ for truly exceptional cases.
+- **Start skeptical.** Assume nothing. High scores require strong evidence.
+- **Missing information = lower score.** You wouldn't trust what you can't verify.
+- **No website (website_active=false) is a RED FLAG.** Significantly penalize daycares with no web presence.
 
-2. Facility & Environment (Max 25 pts)
-   - **Key Evidence**: Interior Photos.
-   - **CRITICAL GATE**: **No Interior Photos = Max 5 pts.**
-   - **25 pts**: "Premium Spaces" (Bright natural light, organized, happy vibes in photos).
-   - **10-20 pts**: "Standard School" (Safe/clean but generic or fluorescent lighting).
-   - **0-5 pts**: "Invisible/Exterior Only" (No photos or only outside).
+SCORING CATEGORIES (0-25 pts each, max total 90):
 
-3. Teacher & Staff (Max 25 pts)
-   - **Key Evidence**: Staff Bios or Specific Reviews.
-   - **CRITICAL GATE**: **No Bios/Names = Max 10 pts.**
-   - **25 pts**: "Real Humans" (Staff Bios w/ photos AND/OR Specific praise in reviews).
-   - **15-20 pts**: "Good Team" (Mentioned as nice, but no specific bios).
-   - **0-10 pts**: "Unknown/Generic" (No names, no bios).
+1. **Safety & Transparency** (0-25 pts)
+   Ask: "Can I trust them with my child's safety?"
+   - Is licensing verified and current?
+   - Are prices listed openly, or do they hide behind "call for pricing"?
+   - Are safety policies (cameras, secure entry, ratios) mentioned?
+   - Does the safety_summary reveal any red flags, violations, or incidents?
+   - **No website = major penalty (max 10 pts).** What are they hiding?
 
-4. Parent Reputation (Max 25 pts)
-   - **Key Evidence**: Reviews.
-   - **CRITICAL GATE**: **0 Reviews = 0 pts.**
-   - **25 pts**: "Community Favorite" (10+ reviews, 4.8+ stars).
-   - **15-20 pts**: "Good Standing" (Positive rating, but fewer reviews).
-   - **0 pts**: "Ghost" (0 reviews).
+2. **Facility & Environment** (0-25 pts)
+   Ask: "Does this look like a good place for my child?"
+   - Are there quality INTERIOR photos showing the actual spaces?
+   - Do photos show bright, clean, organized environments?
+   - Is outdoor play space visible?
+   - **No interior photos = max 5 pts.** I can't trust what I can't see.
+   - **Only stock/generic photos = max 12 pts.** Show me YOUR space.
+
+3. **Teacher Quality** (0-25 pts)
+   Ask: "Who will be caring for my child?"
+   - Are staff members named with bios or credentials?
+   - Do reviews specifically praise individual teachers?
+   - Is there information about experience, training, or tenure?
+   - **No staff info at all = max 8 pts.** I need to know who's watching my kid.
+
+4. **Parent Reputation** (0-25 pts)
+   Ask: "What do other parents say?"
+   - What is the sentiment in the reputation_summary?
+   - Consider BOTH quantity (volume) and quality (what they actually say).
+   - Are there specific positive experiences mentioned?
+   - Are there concerning patterns or complaints?
+   - **Zero reviews = max 5 pts.** No social proof is a warning sign.
+   - **Quality matters more than quantity.** 5 detailed glowing reviews > 20 generic ones.
+
+TIER CLASSIFICATION:
+- **Top Rated (85-90)**: Exceptional. Strong evidence across ALL categories. Rare.
+- **Verified (70-84)**: Good standing. Most information available and positive.
+- **Standard (50-69)**: Basic info present but gaps exist.
+- **Needs Review (<50)**: Limited info or significant concerns.
 
 
 
