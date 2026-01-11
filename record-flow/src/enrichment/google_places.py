@@ -2,6 +2,7 @@ import os
 import requests
 import time
 import logging
+import re
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -12,7 +13,17 @@ GOOGLE_PLACES_API_KEY = os.environ.get("GOOGLE_PLACES_API_KEY")
 import hashlib
 import json
 import difflib
-import re
+from urllib.parse import urlparse, urlunparse
+
+def _clean_url(url):
+    """Removes query parameters from a URL."""
+    if not url:
+        return url
+    try:
+        parsed = urlparse(url)
+        return urlunparse(parsed._replace(query=""))
+    except Exception:
+        return url
 
 def _are_names_similar(name1, name2, threshold=0.3):
     """
@@ -306,7 +317,7 @@ def _get_place_details(place_id):
             "address": result.get("formatted_address"),
             "contact": {
                 "phone": result.get("formatted_phone_number"),
-                "website": result.get("website")
+                "website": _clean_url(result.get("website"))
             },
             "rating": {
                 "stars": result.get("rating"),
