@@ -179,7 +179,23 @@ def main():
     parser.add_argument("--resume", action="store_true", help="Resume from last checkpoint")
     parser.add_argument("--limit", type=int, default=None, help="Stop after N records")
     parser.add_argument("--workers", type=int, default=4, help="Parallel workers (default: 4)")
+    parser.add_argument("--ids", type=str, default=None, help="Daycare IDs to process (comma-separated like 'TX-1335524,TX-1234567') OR path to a CSV file")
     args = parser.parse_args()
+
+    # Load filter IDs if provided
+    filter_ids = None
+    if args.ids:
+        # Check if it's a file path
+        if os.path.exists(args.ids):
+            with open(args.ids, 'r') as f:
+                content = f.read()
+                # Handle both comma-separated and newline-separated IDs
+                filter_ids = set(id.strip() for id in content.replace('\n', ',').split(',') if id.strip())
+            print(f"Loaded {len(filter_ids)} daycare IDs from file")
+        else:
+            # Treat it as comma-separated IDs directly
+            filter_ids = set(id.strip() for id in args.ids.split(',') if id.strip())
+            print(f"Filtering to {len(filter_ids)} daycare IDs from command line")
 
     os.makedirs(os.path.dirname(OUTPUT_FILE), exist_ok=True)
     start_time = time.time()
@@ -207,6 +223,7 @@ def main():
 
     # Load records
     records_to_process = []
+    skipped_by_filter = 0
     with open(INPUT_FILE, 'r') as f:
         for i, line in enumerate(f):
             if i < start_index:
@@ -216,15 +233,26 @@ def main():
             line = line.strip()
             if line:
                 try:
-                    records_to_process.append((i, json.loads(line)))
+                    record = json.loads(line)
+                    # Filter by IDs if provided
+                    if filter_ids is not None:
+                        record_id = record.get('id', '')
+                        if record_id not in filter_ids:
+                            skipped_by_filter += 1
+                            continue
+                    records_to_process.append((i, record))
                 except json.JSONDecodeError:
                     logger.warning(f"Invalid JSON at line {i}, skipping")
 
     total = len(records_to_process)
     if total == 0:
         print("No records to process.")
+        if filter_ids is not None:
+            print(f"Note: {skipped_by_filter} records were filtered out by the provided IDs list.")
         return
 
+    if filter_ids is not None:
+        print(f"Filtered to {total} records (skipped {skipped_by_filter})")
     print(f"Processing {total} records with {args.workers} workers...")
 
     # Checkpointing
