@@ -37,7 +37,7 @@ else:
 class MarketingContent(BaseModel):
     headline: str = Field(description="4-7 words. The 'Title'. Specific and weirdly clear. (e.g. 'Montessori Home with Large Yard' or 'Bright Horizons at The Domain').")
     sub_headline: str = Field(description="1 sentence. The 'Hook'. Key logistics + vibe. (e.g. 'Full-time care for infants to pre-k with a focus on outdoor play and organic meals.').")
-    description: str = Field(max_length=600, description="STRICT limit 600 chars. 2 paragraphs max. The 'Details'. Informative, warm, and natural. Tells the story of the program, the director, and the space without sounding like a brochure.")
+    description: str = Field(max_length=1000, description="STRICT limit 1000 chars. 2 paragraphs max. The 'Details'. Informative, warm, and natural. Tells the story of the program, the director, and the space without sounding like a brochure.")
 
 class StructuredData(BaseModel):
     program_type: Literal['Montessori', 'Reggio', 'Waldorf', 'Play-based', 'Academic', 'Religious', 'Nature-based', 'Language Immersion']
@@ -134,7 +134,7 @@ def _build_finalized_record(gemini_response: Dict[str, Any], record: Dict[str, A
         "thumbnail_url": gemini_response.get("media_selection", {}).get("best_thumbnail_path"),
         "headline": gemini_response.get("marketing_content", {}).get("headline"),
         "sub_headline": gemini_response.get("marketing_content", {}).get("sub_headline"),
-        "description": _enforce_length_limit(gemini_response.get("marketing_content", {}).get("description"), record.get("id"), 600),
+        "description": _enforce_length_limit(gemini_response.get("marketing_content", {}).get("description"), record.get("id"), 1000),
         "search_tags": gemini_response.get("search_tags", []),
 
         # Insights (from Gemini, stored as JSONB)
@@ -165,7 +165,7 @@ def _build_finalized_record(gemini_response: Dict[str, Any], record: Dict[str, A
     }
 
 
-def _enforce_length_limit(text: str, record_id: Any, max_length: int = 600) -> str:
+def _enforce_length_limit(text: str, record_id: Any, max_length: int = 1000) -> str:
     """
     Truncates text to max_length, attempting to cut at the last sentence end.
     """

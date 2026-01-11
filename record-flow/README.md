@@ -111,7 +111,7 @@ Main daycare records with all enriched data ready for database insert
 | thumbnail_url | TEXT | Primary image URL/path |
 | headline | TEXT NOT NULL | Marketing headline (4-7 words) |
 | sub_headline | TEXT NOT NULL | Marketing subheadline (1 sentence) |
-| description | TEXT NOT NULL | Full description (max 600 chars, 2 paragraphs) |
+| description | TEXT NOT NULL | Full description (max 1000 chars, 2 paragraphs) |
 | search_tags | JSONB | Array of standardized search tags (0-5 tags), GIN indexed |
 
 **Insights**
