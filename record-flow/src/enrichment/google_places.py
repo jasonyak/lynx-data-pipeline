@@ -11,14 +11,79 @@ GOOGLE_PLACES_API_KEY = os.environ.get("GOOGLE_PLACES_API_KEY")
 
 import hashlib
 import json
+import difflib
+import re
+
+def _are_names_similar(name1, name2, threshold=0.3):
+    """
+    Checks if two names are similar using SequenceMatcher.
+    Lowercase and normalized comparison.
+    """
+    if not name1 or not name2:
+        return False
+    
+    n1 = name1.lower()
+    n2 = name2.lower()
+    
+    # Quick check for exact containment
+    if n1 in n2 or n2 in n1:
+        return True
+        
+    ratio = difflib.SequenceMatcher(None, n1, n2).ratio()
+    return ratio >= threshold
+
+def _are_addresses_consistent(addr1, addr2):
+    """
+    Checks if addresses are consistent, mainly focusing on street numbers.
+    """
+    if not addr1 or not addr2:
+        return False
+        
+    # Extract leading digits (street number)
+    num1_match = re.search(r'^(\d+)', str(addr1).strip())
+    num2_match = re.search(r'^(\d+)', str(addr2).strip())
+    
+    if num1_match and num2_match:
+        return num1_match.group(1) == num2_match.group(1)
+        
+    # If we can't extract numbers, we might return True to be safe, 
+    # or rely on name matching to carry the weight. 
+    # Let's return True (pass) if we can't disprove it by number.
+    return True
 
 def _get_cache_path(query):
     """Generates a cache file path based on the MD5 hash of the query."""
+
     cache_dir = os.path.join("data", "cache", "google_places")
     os.makedirs(cache_dir, exist_ok=True)
     
     query_hash = hashlib.md5(query.encode("utf-8")).hexdigest()
     return os.path.join(cache_dir, f"{query_hash}.json")
+
+def _is_valid_match(record, google_data, address_query=""):
+    """
+    Validates if the Google Place match is good enough.
+    Logs matching decisions.
+    """
+    record_id = record.get('id')
+    name = record.get('name')
+    google_name = google_data.get("name")
+    google_address = google_data.get("address")
+    
+    # TEMP LOGGING
+    logger.info(f"[{record_id}] Checking Similarity: '{name}' (Record) vs '{google_name}' (Google)")
+    
+    name_match = _are_names_similar(name, google_name)
+    addr_match = _are_addresses_consistent(address_query, google_address)
+    
+    logger.info(f"[{record_id}] Decision Results -> Name Match: {name_match}, Addr Match: {addr_match}")
+     
+    if not name_match:
+        logger.info(f"[{record_id}] MISMATCH NAME: '{name}' vs '{google_name}'")
+    if not addr_match:
+        logger.info(f"[{record_id}] MISMATCH ADDRESS: '{address_query}' vs '{google_address}'")
+        
+    return name_match and addr_match
 
 def find_and_enrich(record):
     """
@@ -57,16 +122,40 @@ def find_and_enrich(record):
         return record
 
     # --- Caching Logic ---
+    # --- Caching Logic ---
     cache_path = _get_cache_path(full_query)
+    cached_data = None
     if os.path.exists(cache_path):
         try:
             with open(cache_path, "r") as f:
                 cached_data = json.load(f)
-            logger.debug(f"[{record.get('id')}] Cache HIT for {name}")
-            record["google_data"] = cached_data
-            return record
         except Exception as e:
             logger.warning(f"Failed to read cache for {name}, re-fetching: {e}")
+
+    if cached_data:
+        # If cached as NOT_FOUND, return None to drop it
+        if cached_data.get("status") == "NOT_FOUND":
+            logger.info(f"[{record.get('id')}] Dropping (Cached NOT_FOUND) {name}")
+            return None
+        
+        # Verify cached data is still valid under new strict rules
+        # We need to re-validate it because we might have cached a loose match previously
+        if _is_valid_match(record, cached_data, full_query):
+             logger.debug(f"[{record.get('id')}] Cache HIT for {name}")
+             record["google_data"] = cached_data
+             return record
+        else:
+             # If validation fails now, we treat it as NOT_FOUND and update cache
+             logger.info(f"[{record.get('id')}] Dropping (Cached MISMATCH) {name}")
+             not_found_data = {"status": "NOT_FOUND", "reason": "mismatch_cached", "metadata": {"query_name": name, "found_name": cached_data.get("name")}}
+             
+             try:
+                 with open(cache_path, "w") as f:
+                     json.dump(not_found_data, f)
+             except Exception as e:
+                 logger.warning(f"Failed to write cache for {name}: {e}")
+             
+             return None
 
     try:
         place_id = _search_place(full_query)
@@ -74,6 +163,19 @@ def find_and_enrich(record):
             logger.debug(f"[{record.get('id')}] Found Place ID {place_id} for {name}")
             details = _get_place_details(place_id)
             if details:
+                if not _is_valid_match(record, details, full_query):
+                    # _is_valid_match handles the logging
+                    not_found_data = {"status": "NOT_FOUND", "reason": "mismatch", "metadata": {"query_name": name, "found_name": details.get("name")}}
+                    
+                    # Cache the failure so we don't retry
+                    try:
+                        with open(cache_path, "w") as f:
+                            json.dump(not_found_data, f)
+                    except Exception as e:
+                        logger.warning(f"Failed to write cache for {name}: {e}")
+                        
+                    return None
+
                 record["google_data"] = details
                 # Save to cache
                 try:
@@ -84,13 +186,13 @@ def find_and_enrich(record):
         else:
             logger.debug(f"[{record.get('id')}] No Google Place found for {name}")
             not_found_data = {"status": "NOT_FOUND", "searched_query": full_query}
-            record["google_data"] = not_found_data
-            # Cache NOT_FOUND result too, to avoid re-searching
+            # Cache NOT_FOUND result too
             try:
                 with open(cache_path, "w") as f:
                     json.dump(not_found_data, f)
             except Exception as e:
                 logger.warning(f"Failed to write cache for {name}: {e}")
+            return None
             
     except Exception as e:
         logger.error(f"[{record.get('id')}] Error enriching {name}: {e}")

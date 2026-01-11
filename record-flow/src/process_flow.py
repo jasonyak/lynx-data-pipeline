@@ -61,6 +61,11 @@ def process_record(
     try:
         # Step 1: Google Places enrichment
         record = find_and_enrich(record)
+        if record is None:
+            # find_and_enrich now returns None if not found or mismatch
+            # We skip logging here because find_and_enrich logs why it dropped it
+            return None
+
         google_data = record.get("google_data", {})
 
         # Validation: Check if found
