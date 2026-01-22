@@ -180,7 +180,11 @@ def main():
     parser.add_argument("--limit", type=int, default=None, help="Stop after N records")
     parser.add_argument("--workers", type=int, default=4, help="Parallel workers (default: 4)")
     parser.add_argument("--ids", type=str, default=None, help="Daycare IDs to process (comma-separated like 'TX-1335524,TX-1234567') OR path to a CSV file")
+    parser.add_argument("--input", type=str, default=None, help="Input file path (overrides config generic default)")
     args = parser.parse_args()
+
+    # Determine input file
+    input_file_path = args.input if args.input else INPUT_FILE
 
     # Load filter IDs if provided
     filter_ids = None
@@ -214,8 +218,8 @@ def main():
         open(OUTPUT_FILE, 'w').close()
         open(RETRY_FILE, 'w').close()  # Clear retry file on fresh start
 
-    if not os.path.exists(INPUT_FILE):
-        print(f"Error: Input file {INPUT_FILE} not found.")
+    if not os.path.exists(input_file_path):
+        print(f"Error: Input file {input_file_path} not found.")
         return
 
     output_writer = ThreadSafeOutputWriter(OUTPUT_FILE)
@@ -224,7 +228,7 @@ def main():
     # Load records
     records_to_process = []
     skipped_by_filter = 0
-    with open(INPUT_FILE, 'r') as f:
+    with open(input_file_path, 'r') as f:
         for i, line in enumerate(f):
             if i < start_index:
                 continue

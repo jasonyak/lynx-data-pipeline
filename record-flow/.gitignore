@@ -32,6 +32,7 @@ env/
 *.swp
 *.swo
 *~
+*.iml
 
 # Dagster
 .dagster_home/
